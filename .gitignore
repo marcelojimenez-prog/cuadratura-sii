@@ -1,0 +1,16 @@
+node_modules/
+client/node_modules/
+client/dist/
+
+# Configuración local: contiene rutas y claves de certificados. NUNCA versionar.
+config/config.local.json
+
+# Certificados digitales de clientes
+*.pfx
+*.p12
+certs/
+
+# Base de datos y datos importados
+data/
+*.db
+*.log

@@ -1,0 +1,25 @@
+:root {
+  --marca: #0b3c5d;
+  --marca-2: #1d6fa5;
+  --fondo: #f3f5f8;
+}
+body { background: var(--fondo); }
+.barra { background: var(--marca); }
+.barra .navbar-brand { font-weight: 600; letter-spacing: .3px; }
+.barra .form-select { min-width: 0; }
+.kpi { border: 0; border-radius: .75rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.kpi .valor { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.kpi .etiqueta { font-size: .8rem; color: #6c757d; text-transform: uppercase; letter-spacing: .4px; }
+.tarjeta { border: 0; border-radius: .75rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.tarjeta > .card-header { background: transparent; font-weight: 600; border-bottom-color: #eef0f3; }
+.tabla-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nav-tabs .nav-link { color: #495057; }
+.nav-tabs .nav-link.active { font-weight: 600; color: var(--marca); }
+.alerta-item { border-left: 4px solid transparent; }
+.alerta-item.nivel-alta { border-left-color: var(--bs-danger); }
+.alerta-item.nivel-media { border-left-color: var(--bs-warning); }
+.alerta-item.nivel-baja { border-left-color: var(--bs-secondary); }
+.fila-click { cursor: pointer; }
+.barra-estado { height: .5rem; }
+.badge.text-bg-light { border: 1px solid #dee2e6; }
+.aviso-demo { background: #fff3cd; color: #664d03; font-size: .875rem; }

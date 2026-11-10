@@ -1,0 +1,38 @@
+{
+  "_instrucciones": "Copiar este archivo como config.local.json y completar. config.local.json NO se versiona.",
+  "puerto": 4100,
+  "baseDatos": "data/cuadratura.db",
+  "sii": {
+    "ambiente": "produccion",
+    "_ambiente": "produccion | certificacion"
+  },
+  "empresas": [
+    {
+      "rut": "11111111-1",
+      "razonSocial": "CLIENTE PILOTO SPA",
+      "pdf": {
+        "mostrarLogo": false,
+        "_mostrarLogo": "Por defecto los PDF salen sin logo (datos del emisor en texto). true = usar formatos\\DTE\\dtelogo.jpg de la sucursal."
+      },
+      "certificado": {
+        "rutaPfx": "C:\\ruta\\al\\certificado.pfx",
+        "clave": "",
+        "_clave": "Completar SOLO aquí, nunca en el código ni en el chat."
+      },
+      "sucursales": [
+        {
+          "codigo": "CASA_MATRIZ",
+          "nombre": "Casa Matriz",
+          "rutaDatos": "C:\\ruta\\sucursal1\\datos",
+          "rutaProcesos": "C:\\ruta\\sucursal1\\procesos"
+        },
+        {
+          "codigo": "SUC_2",
+          "nombre": "Sucursal 2",
+          "rutaDatos": "C:\\ruta\\sucursal2\\datos",
+          "rutaProcesos": "C:\\ruta\\sucursal2\\procesos"
+        }
+      ]
+    }
+  ]
+}

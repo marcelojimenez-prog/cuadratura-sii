@@ -1,0 +1,31 @@
+{
+  "name": "cuadratura-sii",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cuadratura de ventas Sisgen vs SII por razón social y sucursal",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "dev:server": "node --watch server/index.js",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently -k -n api,web \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "npm --prefix client run build",
+    "start": "node server/index.js",
+    "test": "node --test \"server/test/**/*.test.js\"",
+    "dbf": "node scripts/inspeccionar-dbf.js",
+    "importar": "node scripts/importar-sisgen.js",
+    "sii": "node --no-warnings scripts/sincronizar-sii.js"
+  },
+  "dependencies": {
+    "bwip-js": "^4.5.1",
+    "express": "^4.21.0",
+    "fast-xml-parser": "^4.5.0",
+    "node-forge": "^1.3.1",
+    "pdfkit": "^0.15.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}
