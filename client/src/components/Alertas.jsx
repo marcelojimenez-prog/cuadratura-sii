@@ -48,7 +48,7 @@ export default function Alertas({ alertas, irADocumentos }) {
               {a.monto != null && <span className="text-secondary"> · {pesos(a.monto)}</span>}
             </div>
             {a.motivo && <div className="small text-secondary">{a.motivo}</div>}
-            {a.folio != null && !['SALTO_FOLIO', 'FOLIO_OTRO_MES'].includes(a.codigo) && (
+            {a.folio != null && !['SALTO_FOLIO', 'FOLIO_OTRO_MES', 'FOLIOS_FUERA_DE_SISGEN'].includes(a.codigo) && (
               <button className="btn btn-link btn-sm p-0 mt-1" onClick={() => irADocumentos({ buscar: String(a.folio), tipo: String(a.tipoSii) })}>
                 Ver documento
               </button>

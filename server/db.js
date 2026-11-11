@@ -109,6 +109,68 @@ CREATE TABLE IF NOT EXISTS docs_sii (
   UNIQUE (rut_emisor, tipo_sii, folio)
 );
 CREATE INDEX IF NOT EXISTS ix_sii_periodo ON docs_sii (rut_emisor, periodo);
+
+-- ===== Acceso al portal =====
+-- Cliente = la empresa (grupo) con que trabaja Sisgen; agrupa una o varias razones sociales.
+CREATE TABLE IF NOT EXISTS clientes (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  activo         INTEGER NOT NULL DEFAULT 1,
+  creado_en      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+-- Usuarios creados por Sisgen (no hay registro abierto).
+-- rol 'admin' = equipo Sisgen (ve todo); 'cliente' = ve solo las razones sociales de su cliente.
+CREATE TABLE IF NOT EXISTS usuarios (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  usuario            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  nombre             TEXT NOT NULL,
+  clave_hash         TEXT NOT NULL,
+  rol                TEXT NOT NULL CHECK (rol IN ('admin', 'cliente')),
+  cliente_id         INTEGER REFERENCES clientes(id),
+  activo             INTEGER NOT NULL DEFAULT 1,
+  debe_cambiar_clave INTEGER NOT NULL DEFAULT 1,
+  intentos_fallidos  INTEGER NOT NULL DEFAULT 0,
+  bloqueado_hasta    TEXT,
+  creado_en          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  ultimo_ingreso     TEXT,
+  CHECK (rol = 'admin' OR cliente_id IS NOT NULL)
+);
+
+-- Sesiones: solo se guarda el hash del token (la cookie lleva el token).
+CREATE TABLE IF NOT EXISTS sesiones (
+  token_hash     TEXT PRIMARY KEY,
+  usuario_id     INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  creada_en      TEXT NOT NULL,
+  expira_en      TEXT NOT NULL,
+  ip             TEXT
+);
+
+-- Registro de intentos de ingreso (auditoría)
+CREATE TABLE IF NOT EXISTS ingresos (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  usuario        TEXT,
+  usuario_id     INTEGER,
+  exito          INTEGER NOT NULL,
+  motivo         TEXT,
+  ip             TEXT,
+  fecha          TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+-- Bloques de folios recibidos por el SII que no pertenecen a ningún CAF de las sucursales
+-- (boletas emitidas fuera de Sisgen). Se recalculan en cada sincronización del periodo.
+CREATE TABLE IF NOT EXISTS sii_folios_externos (
+  rut_emisor     TEXT NOT NULL,
+  periodo        TEXT NOT NULL,
+  tipo_sii       INTEGER NOT NULL,
+  desde          INTEGER NOT NULL,
+  ultimo         INTEGER NOT NULL,
+  cantidad       INTEGER NOT NULL,
+  caf_antes      TEXT,                      -- sucursal dueña del CAF anterior al bloque
+  caf_despues    TEXT,                      -- sucursal dueña del CAF posterior al bloque
+  consultado_en  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY (rut_emisor, periodo, tipo_sii, desde)
+);
 `;
 
 let db;
@@ -130,6 +192,8 @@ function migrar(d) {
   if (!cols.includes('sin_xml')) d.exec('ALTER TABLE docs_sisgen ADD COLUMN sin_xml INTEGER NOT NULL DEFAULT 0');
   const colsSuc = d.prepare('PRAGMA table_info(sucursales)').all().map((c) => c.name);
   if (!colsSuc.includes('ruta_procesos')) d.exec('ALTER TABLE sucursales ADD COLUMN ruta_procesos TEXT');
+  const colsEmp = d.prepare('PRAGMA table_info(empresas)').all().map((c) => c.name);
+  if (!colsEmp.includes('cliente_id')) d.exec('ALTER TABLE empresas ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)');
 }
 
 export function getDb() {
@@ -153,9 +217,14 @@ export function transaccion(fn) {
 
 // ---------- Consultas ----------
 
-export function listarEmpresas() {
+/** @param {Set<string>|null} [soloRuts] null = todas */
+export function listarEmpresas(soloRuts = null) {
   const d = getDb();
-  const empresas = d.prepare('SELECT rut, razon_social, es_demo FROM empresas ORDER BY razon_social').all();
+  const empresas = d
+    .prepare(`SELECT e.rut, e.razon_social, e.es_demo, e.cliente_id, c.nombre AS cliente
+                FROM empresas e LEFT JOIN clientes c ON c.id = e.cliente_id ORDER BY e.razon_social`)
+    .all()
+    .filter((e) => !soloRuts || soloRuts.has(e.rut));
   const sucs = d.prepare('SELECT id, codigo, nombre FROM sucursales WHERE rut_empresa = ? ORDER BY nombre');
   const periodos = d.prepare(
     'SELECT DISTINCT periodo FROM docs_sisgen WHERE rut_emisor = ? UNION SELECT DISTINCT periodo FROM docs_sii WHERE rut_emisor = ? ORDER BY periodo DESC'
@@ -164,6 +233,8 @@ export function listarEmpresas() {
     rut: e.rut,
     razonSocial: e.razon_social,
     esDemo: !!e.es_demo,
+    clienteId: e.cliente_id ?? null,
+    cliente: e.cliente ?? null,
     sucursales: sucs.all(e.rut),
     periodos: periodos.all(e.rut, e.rut).map((p) => p.periodo),
   }));
@@ -276,6 +347,31 @@ export function boletasSospechosas(rut, periodo) {
     .all(rut, periodo);
 }
 
+/** Sucursales de una razón social con la última vez que se leyeron sus datos de Sisgen. */
+export function sucursalesConLectura(rut) {
+  return getDb()
+    .prepare(
+      `SELECT s.id, s.codigo, s.nombre,
+              (SELECT MAX(importado_en) FROM docs_sisgen d WHERE d.sucursal_id = s.id) AS ultima_lectura,
+              (SELECT MAX(periodo) FROM docs_sisgen d WHERE d.sucursal_id = s.id) AS ultimo_periodo
+         FROM sucursales s WHERE s.rut_empresa = ? ORDER BY s.nombre`
+    )
+    .all(rut);
+}
+
+/**
+ * Huella de los datos de una razón social en un periodo: cambia cada vez que se reimporta
+ * desde Sisgen o se vuelve a consultar el SII (sirve para no recalcular la cuadratura sin necesidad).
+ */
+export function huellaDatos(rut, periodo) {
+  const d = getDb();
+  const a = d.prepare('SELECT COUNT(*) AS n, MAX(importado_en) AS m FROM docs_sisgen WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
+  const b = d.prepare('SELECT COUNT(*) AS n, MAX(consultado_en) AS m FROM docs_sii WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
+  const c = sincronizacionSii(rut, periodo);
+  const f = d.prepare('SELECT COUNT(*) AS n, MAX(consultado_en) AS m FROM sii_folios_externos WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
+  return [a.n, a.m, b.n, b.m, c?.consultado_en, f.n, f.m].join('|');
+}
+
 export function resumenSii(rut, periodo) {
   return getDb().prepare('SELECT * FROM sii_resumen WHERE rut_emisor = ? AND periodo = ?').all(rut, periodo);
 }
@@ -325,6 +421,53 @@ export function rangosCaf(rut) {
         WHERE c.rut_empresa = ?`
     )
     .all(rut);
+}
+
+/** Cantidad de documentos Sisgen por tipo SII en un periodo. */
+export function conteoSisgenPorTipo(rut, periodo) {
+  const filas = getDb()
+    .prepare('SELECT tipo_sii, COUNT(*) AS n FROM docs_sisgen WHERE rut_emisor = ? AND periodo = ? AND tipo_sii IS NOT NULL GROUP BY tipo_sii')
+    .all(rut, periodo);
+  return new Map(filas.map((f) => [f.tipo_sii, f.n]));
+}
+
+/** Boletas (u otro tipo) de Sisgen de un periodo, para verificarlas una a una. */
+export function docsSisgenDeTipo(rut, periodo, tipoSii) {
+  return getDb()
+    .prepare(
+      `SELECT d.tipo_sii, d.folio, d.fecha, d.total, d.rut_receptor, s.nombre AS sucursal FROM docs_sisgen d
+         JOIN sucursales s ON s.id = d.sucursal_id
+        WHERE d.rut_emisor = ? AND d.periodo = ? AND d.tipo_sii = ?`
+    )
+    .all(rut, periodo, tipoSii);
+}
+
+/** Boletas del periodo que la API de boletas dejó con algún problema (se vuelven a consultar). */
+export function boletasConProblemaApi(rut, periodo) {
+  return getDb()
+    .prepare(
+      `SELECT d.tipo_sii, d.folio, d.fecha, d.total, d.rut_receptor FROM docs_sii a
+         JOIN docs_sisgen d ON d.rut_emisor = a.rut_emisor AND d.tipo_sii = a.tipo_sii AND d.folio = a.folio AND d.periodo = a.periodo
+        WHERE a.rut_emisor = ? AND a.periodo = ? AND a.fuente = 'API_BOLETA' AND a.estado <> 'ACEPTADO'`
+    )
+    .all(rut, periodo);
+}
+
+/** Reemplaza los bloques de folios externos detectados para un RUT/periodo/tipo. */
+export function reemplazarFoliosExternos(rut, periodo, tipoSii, bloques) {
+  return transaccion((d) => {
+    d.prepare('DELETE FROM sii_folios_externos WHERE rut_emisor = ? AND periodo = ? AND tipo_sii = ?').run(rut, periodo, tipoSii);
+    const ins = d.prepare(
+      `INSERT INTO sii_folios_externos (rut_emisor, periodo, tipo_sii, desde, ultimo, cantidad, caf_antes, caf_despues)
+       VALUES (?,?,?,?,?,?,?,?)`
+    );
+    for (const b of bloques) ins.run(rut, periodo, tipoSii, b.desde, b.ultimo, b.cantidad, b.antes ?? null, b.despues ?? null);
+    return bloques.length;
+  });
+}
+
+export function foliosExternos(rut, periodo) {
+  return getDb().prepare('SELECT * FROM sii_folios_externos WHERE rut_emisor = ? AND periodo = ? ORDER BY tipo_sii, desde').all(rut, periodo);
 }
 
 /** Inserta o actualiza el estado SII de documentos. */

@@ -17,7 +17,22 @@ export class ErrorRcv extends Error {
   }
 }
 
+// El SII responde a veces HTTP 5xx transitorios: se reintenta antes de fallar
+const REINTENTOS = 3;
+
 async function llamar(token, metodo, data) {
+  for (let intento = 1; ; intento++) {
+    try {
+      return await llamarUnaVez(token, metodo, data);
+    } catch (e) {
+      const transitorio = e.transitorio || e.name === 'TimeoutError' || e.name === 'TypeError';
+      if (!transitorio || intento >= REINTENTOS) throw e;
+      await new Promise((r) => setTimeout(r, 3000 * intento));
+    }
+  }
+}
+
+async function llamarUnaVez(token, metodo, data) {
   const res = await fetch(`${URL_BASE}/${metodo}`, {
     method: 'POST',
     headers: {
@@ -34,7 +49,7 @@ async function llamar(token, metodo, data) {
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!res.ok) throw new ErrorRcv(metodo, `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new ErrorRcv(metodo, `HTTP ${res.status}`), { transitorio: res.status >= 500 });
   const json = await res.json();
   const est = json.respEstado;
   if (est && est.codRespuesta !== 0) throw new ErrorRcv(metodo, `${est.codRespuesta} ${est.msgeRespuesta ?? est.codError ?? ''}`.trim());

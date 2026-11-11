@@ -16,7 +16,9 @@
     "test": "node --test \"server/test/**/*.test.js\"",
     "dbf": "node scripts/inspeccionar-dbf.js",
     "importar": "node scripts/importar-sisgen.js",
-    "sii": "node --no-warnings scripts/sincronizar-sii.js"
+    "sii": "node --no-warnings scripts/sincronizar-sii.js",
+    "agregar": "node --no-warnings scripts/agregar-sucursal.js",
+    "usuarios": "node --no-warnings scripts/usuarios.js"
   },
   "dependencies": {
     "bwip-js": "^4.5.1",

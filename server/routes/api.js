@@ -1,30 +1,45 @@
 import { Router } from 'express';
-import { listarEmpresas, docsSisgen, docsSii, rangosCaf, xmlOtrosMeses, resumenSii, sincronizacionSii } from '../db.js';
-import { TIPOS_A_CUADRAR } from '../lib/sisgen/tipos.js';
-import { cuadrar } from '../lib/cuadratura/motor.js';
+import { listarEmpresas } from '../db.js';
+import { calcularCuadratura, estadoEmpresa } from '../lib/cuadratura/resumen.js';
 import { documentoConSucursal } from '../db.js';
 import { prepararDocumento } from '../lib/documentos/servicio.js';
 import { cargarConfig } from '../config.js';
+import authRouter, { requiereSesion } from './auth.js';
+import adminRouter from './admin.js';
+import { rutsPermitidos, puedeVer } from '../usuarios.js';
 
 const r = Router();
 
 r.get('/salud', (_req, res) => res.json({ ok: true }));
+r.use('/auth', authRouter);
 
-r.get('/empresas', (_req, res) => res.json(listarEmpresas()));
+// Todo lo que sigue exige sesión iniciada
+r.use(requiereSesion);
+r.use('/admin', adminRouter);
+
+/** Un RUT que el usuario no puede ver se responde igual que uno inexistente. */
+const noEncontrado = (res) => res.status(404).json({ error: 'Razón social no encontrada' });
+
+r.get('/empresas', (req, res) => res.json(listarEmpresas(rutsPermitidos(req.usuario))));
 
 /** Resultado completo de cuadratura de una razón social en un periodo. */
 r.get('/cuadratura/:rut/:periodo', (req, res) => {
   const { rut, periodo } = req.params;
   if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: 'Periodo debe ser YYYY-MM' });
-  const sinc = sincronizacionSii(rut, periodo);
-  const resultado = cuadrar(docsSisgen(rut, periodo), docsSii(rut, periodo), {
-    rangos: rangosCaf(rut),
-    xmlOtrosMeses: xmlOtrosMeses(rut, periodo),
-    resumenSii: resumenSii(rut, periodo),
-    // Con el RCV sincronizado, todo tipo tributario se considera consultado al SII
-    ...(sinc ? { tiposConsultados: TIPOS_A_CUADRAR } : {}),
-  });
-  res.json({ rut, periodo, siiConsultadoEn: sinc?.consultado_en ?? null, ...resultado });
+  if (!puedeVer(req.usuario, rut)) return noEncontrado(res);
+  res.json(calcularCuadratura(rut, periodo));
+});
+
+/**
+ * Página de inicio: estado de todas las razones sociales visibles para el usuario en un periodo
+ * (por defecto, el último periodo con datos de cada una).
+ */
+r.get('/inicio', (req, res) => {
+  const periodo = /^\d{4}-\d{2}$/.test(req.query.periodo ?? '') ? req.query.periodo : null;
+  const empresas = listarEmpresas(rutsPermitidos(req.usuario));
+  const filas = empresas.map((e) => estadoEmpresa(e, periodo));
+  const periodos = [...new Set(empresas.flatMap((e) => e.periodos))].sort().reverse();
+  res.json({ periodo, periodos, empresas: filas });
 });
 
 /**
@@ -38,6 +53,7 @@ r.get('/documento/:rut/:tipo/:folio/:formato', async (req, res, next) => {
     if (!/^\d{7,8}-[\dkK]$/.test(rut) || !Number.isInteger(tipo) || !Number.isInteger(folio) || !['xml', 'pdf'].includes(formato)) {
       return res.status(400).json({ error: 'Parámetros inválidos' });
     }
+    if (!puedeVer(req.usuario, rut)) throw Object.assign(new Error('Documento no encontrado'), { status: 404 });
     const doc = documentoConSucursal(rut, tipo, folio, req.query.sucursal || null);
     if (!doc) throw Object.assign(new Error('Documento no encontrado en Sisgen'), { status: 404 });
     if (!doc.ruta_procesos) throw Object.assign(new Error('La sucursal no tiene configurada su carpeta procesos'), { status: 404 });

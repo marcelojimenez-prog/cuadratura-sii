@@ -100,7 +100,7 @@ export default function Resumen({ datos, irAAlertas, irADocumentos }) {
               <li key={i} className="list-group-item d-flex justify-content-between gap-2 flex-wrap">
                 <span>
                   <span className={`text-${NIVEL_INFO[a.nivel].color} me-2`}>●</span>
-                  <strong>{a.tipoNombre} {numero(a.folio)}</strong> — {a.titulo}
+                  <strong>{a.tipoNombre} {a.folio == null ? '(total del mes)' : a.folioHasta ? `folios ${numero(a.folio)} al ${numero(a.folioHasta)}` : numero(a.folio)}</strong> — {a.titulo}
                   {a.motivo && <span className="text-secondary">: {a.motivo}</span>}
                   {a.adicionales?.map((t) => <span key={t} className="badge text-bg-light ms-2">{t}</span>)}
                 </span>

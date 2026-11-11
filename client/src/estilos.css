@@ -1,12 +1,28 @@
+/* Colores exactos de Sisgen Chile
+   Logo: negro #1D1D1B ("SIS"), celeste #93B5E5 ("GEN"), gris #77777B (lema).
+   Sitio sisgenchile.cl: azul de enlaces #3697D9. */
 :root {
-  --marca: #0b3c5d;
-  --marca-2: #1d6fa5;
-  --fondo: #f3f5f8;
+  --sis-negro: #1d1d1b;
+  --sis-celeste: #93b5e5;
+  --sis-celeste-suave: #eef3fb;
+  --sis-gris: #77777b;
+  --sis-azul: #3697d9;
+  --marca: var(--sis-azul);
+  --marca-2: #2a7fbb;    /* azul Sisgen oscurecido para hover */
+  --fondo: #f1f3f4;
 }
-body { background: var(--fondo); }
-.barra { background: var(--marca); }
-.barra .navbar-brand { font-weight: 600; letter-spacing: .3px; }
+body { background: var(--fondo); color: var(--sis-negro); }
+
+/* ===== Cabecera ===== */
+.barra { background: #fff; border-bottom: 1px solid #e3e6ea; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .barra .form-select { min-width: 0; }
+.marca-cabecera { display: flex; align-items: center; gap: .75rem; color: var(--sis-negro); }
+.marca-cabecera:hover { color: var(--sis-negro); }
+.logo-cabecera { height: 2.4rem; width: auto; }
+.separador-marca { width: 1px; align-self: stretch; background: #d5d9de; margin: .15rem 0; }
+.texto-marca { display: flex; flex-direction: column; line-height: 1.15; font-weight: 600; font-size: 1.1rem; text-align: left; }
+.texto-marca small { font-weight: 400; font-size: .78rem; color: var(--marca); letter-spacing: .3px; text-transform: uppercase; }
+
 .kpi { border: 0; border-radius: .75rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 .kpi .valor { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .kpi .etiqueta { font-size: .8rem; color: #6c757d; text-transform: uppercase; letter-spacing: .4px; }
@@ -14,7 +30,9 @@ body { background: var(--fondo); }
 .tarjeta > .card-header { background: transparent; font-weight: 600; border-bottom-color: #eef0f3; }
 .tabla-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nav-tabs .nav-link { color: #495057; }
-.nav-tabs .nav-link.active { font-weight: 600; color: var(--marca); }
+.nav-tabs .nav-link.active { font-weight: 600; color: var(--marca); border-top: 2px solid var(--marca); }
+a, .btn-link { color: var(--marca); }
+.btn-outline-primary { --bs-btn-color: var(--marca); --bs-btn-border-color: var(--marca); --bs-btn-hover-bg: var(--marca); --bs-btn-hover-border-color: var(--marca); }
 .alerta-item { border-left: 4px solid transparent; }
 .alerta-item.nivel-alta { border-left-color: var(--bs-danger); }
 .alerta-item.nivel-media { border-left-color: var(--bs-warning); }
@@ -23,3 +41,83 @@ body { background: var(--fondo); }
 .barra-estado { height: .5rem; }
 .badge.text-bg-light { border: 1px solid #dee2e6; }
 .aviso-demo { background: #fff3cd; color: #664d03; font-size: .875rem; }
+
+/* ===== Ingreso ===== */
+.login { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); background: #fff; }
+.login-marca {
+  background: linear-gradient(165deg, #f7f9fd 0%, var(--sis-celeste-suave) 55%, #dde8f7 100%);
+  border-right: 1px solid #e3e9f2; color: var(--sis-negro);
+  display: flex; flex-direction: column; justify-content: space-between; padding: 3rem clamp(1.5rem, 4vw, 4rem);
+}
+.login-marca-contenido { margin-top: 10vh; max-width: 30rem; }
+.login-logo-img { width: min(15rem, 70%); height: auto; }
+.login-marca h1 { font-size: clamp(1.75rem, 2.6vw, 2.3rem); font-weight: 600; margin: 2.25rem 0 .75rem; }
+.login-modulo { display: block; font-size: .5em; font-weight: 500; color: var(--marca); text-transform: uppercase; letter-spacing: 1.5px; margin-top: .35rem; }
+.login-marca .lead { color: #4a5058; font-size: 1.05rem; }
+.login-beneficios { list-style: none; padding: 0; margin: 2rem 0 0; }
+.login-beneficios li { padding: .6rem 0 .6rem 1.9rem; position: relative; color: #3a3f45; border-top: 1px solid rgba(54,151,217,.18); }
+.login-beneficios li::before {
+  content: '✓'; position: absolute; left: 0; top: .6rem; width: 1.25rem; height: 1.25rem; border-radius: 50%;
+  background: var(--sis-celeste); color: #fff; font-size: .75rem; font-weight: 700; display: grid; place-items: center;
+}
+.login-pie { color: var(--sis-gris); font-size: .85rem; }
+.login-formulario { display: flex; align-items: center; justify-content: center; padding: 2rem 1rem; }
+.login-tarjeta { width: 100%; max-width: 24rem; }
+.login-encabezado-movil { display: none; align-items: center; gap: .75rem; font-weight: 600; color: var(--sis-negro); margin-bottom: 2rem; line-height: 1.2; }
+.form-control:focus { border-color: var(--sis-celeste); box-shadow: 0 0 0 .25rem rgba(147,181,229,.35); }
+.pantalla-centrada { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem 1rem; }
+.pantalla-centrada .login-tarjeta { background: #fff; padding: 2rem; border-radius: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.logo-pantalla { width: 11rem; height: auto; }
+@media (max-width: 767.98px) {
+  .login { grid-template-columns: 1fr; }
+  .login-marca { display: none; }
+  .login-encabezado-movil { display: flex; }
+  .login-formulario { align-items: flex-start; padding-top: 3rem; }
+}
+@media (max-width: 575.98px) {
+  .barra .separador-marca, .barra .texto-marca { display: none; }
+}
+
+/* ===== Menú de usuario ===== */
+.menu-usuario { color: var(--sis-negro); display: flex; align-items: center; gap: .5rem; border: 1px solid #d5d9de; background: #fff; }
+.menu-usuario:hover, .menu-usuario[aria-expanded="true"] { background: var(--sis-celeste-suave); color: var(--sis-negro); border-color: var(--sis-celeste); }
+.avatar { width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--sis-celeste); color: #fff; display: grid; place-items: center; font-size: .7rem; font-weight: 700; }
+.menu-usuario-lista { position: absolute; right: 0; top: calc(100% + .35rem); min-width: 15rem; z-index: 1050; }
+
+/* ===== Inicio ===== */
+.tarjeta-empresa { border-top: 4px solid transparent !important; transition: box-shadow .15s, transform .15s; }
+.tarjeta-empresa:not(:disabled):hover { box-shadow: 0 4px 14px rgba(0,0,0,.1); transform: translateY(-1px); }
+.tarjeta-empresa:disabled { opacity: .7; }
+.borde-success { border-top-color: var(--bs-success) !important; }
+.borde-danger { border-top-color: var(--bs-danger) !important; }
+.borde-warning { border-top-color: var(--bs-warning) !important; }
+.borde-secondary { border-top-color: var(--bs-secondary) !important; }
+.etiqueta-chica { font-size: .72rem; color: #6c757d; text-transform: uppercase; letter-spacing: .4px; }
+
+/* Botón principal con el azul Sisgen en todos sus estados (Bootstrap usa variables por estado) */
+.boton-marca {
+  --bs-btn-bg: var(--sis-azul); --bs-btn-border-color: var(--sis-azul);
+  --bs-btn-hover-bg: var(--marca-2); --bs-btn-hover-border-color: var(--marca-2);
+  --bs-btn-active-bg: var(--marca-2); --bs-btn-active-border-color: var(--marca-2);
+  --bs-btn-disabled-bg: var(--sis-azul); --bs-btn-disabled-border-color: var(--sis-azul);
+  --bs-btn-focus-shadow-rgb: 54, 151, 217;
+}
+
+/* ===== Tabla de clientes (equipo Sisgen) ===== */
+.contador { border: 1px solid transparent; border-radius: .75rem; padding: .6rem .9rem; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.contador:hover { box-shadow: 0 3px 10px rgba(0,0,0,.08); }
+.contador-danger { color: var(--bs-danger-text-emphasis); background: var(--bs-danger-bg-subtle); }
+.contador-warning { color: var(--bs-warning-text-emphasis); background: var(--bs-warning-bg-subtle); }
+.contador-secondary { color: var(--bs-secondary-text-emphasis); background: var(--bs-secondary-bg-subtle); }
+.contador-success { color: var(--bs-success-text-emphasis); background: var(--bs-success-bg-subtle); }
+.contador.activo { border-color: currentColor; }
+.chip-filtro { border: 1px solid #d5d9de; border-radius: 999px; background: #fff; color: #444; }
+.chip-filtro:hover { background: #f4f6f8; }
+.chip-filtro.activo { background: #e9f1fb; border-color: #93B5E5; color: #1D1D1B; }
+.tabla-clientes thead th { font-size: .8rem; font-weight: 600; color: #6c757d; white-space: nowrap; background: #fafbfc; }
+.encabezado-orden { color: inherit; font: inherit; text-decoration: none; }
+.encabezado-orden:hover { color: #3697D9; }
+.fila-cliente { cursor: pointer; }
+.punto-estado { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .5rem; vertical-align: .05rem; }
+.punto-ok { background: var(--bs-success); }
+.punto-alerta { background: var(--bs-warning); }

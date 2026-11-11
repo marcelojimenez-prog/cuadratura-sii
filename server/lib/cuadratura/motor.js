@@ -24,6 +24,8 @@ const clave = (tipo, folio) => `${tipo}-${folio}`;
  *        tiposConsultados: tipos SII efectivamente consultados al SII (por defecto, los presentes en docsSii).
  *        rangos: CAF cargados por sucursal [{ tipo_sii, desde, hasta, sucursal }].
  *        xmlOtrosMeses: Map 'tipo-folio' -> fecha, XML generados en meses vecinos (explican saltos).
+ *        foliosExternos: bloques de folios recibidos por el SII fuera de los CAF de las sucursales
+ *          [{ tipo_sii, desde, ultimo, cantidad, caf_antes, caf_despues }].
  */
 export function cuadrar(docsSisgen, docsSii, opciones = {}) {
   const tiposConsultados = opciones.tiposConsultados ?? new Set(docsSii.map((d) => d.tipo_sii));
@@ -124,6 +126,7 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
 
   // ---- Boletas: cuadre por totales contra el resumen del Registro de Ventas ----
   const cuadreTipos = cuadrarPorResumen(documentos, resumenSii, alertas);
+  alertasFoliosExternos(cuadreTipos, opciones.foliosExternos ?? [], alertas);
   cuadreTipos.push(...cuadreDetalle(documentos, docsSii, tiposResumen));
   cuadreTipos.sort((a, b) => a.tipoSii - b.tipoSii);
 
@@ -255,7 +258,7 @@ const PRIORIDAD_ALERTA = [
   'FALTA_EN_SII', 'RECHAZADO', 'MONTO_DISTINTO', 'REPARO', 'SOLO_EN_SII', 'DOCUMENTO_EN_BLANCO', 'SIN_XML',
   'FOLIO_DUPLICADO', 'FOLIO_DE_OTRA_SUCURSAL', 'ANULADO', 'FOLIO_SIN_CAF',
 ];
-const POR_RANGO = new Set(['SALTO_FOLIO', 'FOLIO_OTRO_MES']);
+const POR_RANGO = new Set(['SALTO_FOLIO', 'FOLIO_OTRO_MES', 'FOLIOS_FUERA_DE_SISGEN']);
 
 function agruparPorDocumento(alertas) {
   const nivel = { alta: 0, media: 1, baja: 2 };
@@ -347,6 +350,36 @@ function cuadrarPorResumen(documentos, resumenSii, alertas) {
   return filas;
 }
 
+/**
+ * Cuando el SII informa MÁS boletas que Sisgen y la sincronización encontró folios recibidos por el
+ * SII fuera de los CAF de las sucursales: otro equipo está emitiendo con el RUT.
+ */
+function alertasFoliosExternos(cuadreTipos, bloques, alertas) {
+  for (const fila of cuadreTipos) {
+    if (fila.estado !== 'DIFERENCIA' || fila.siiDocs <= fila.sisgenDocs) continue;
+    const propios = bloques.filter((b) => b.tipo_sii === fila.tipoSii);
+    if (!propios.length) continue;
+    fila.foliosExternos = propios.reduce((s, b) => s + b.cantidad, 0);
+    // El SII entrega los CAF en orden: el bloque de folios más altos es el más reciente (el que
+    // probablemente explica la diferencia del mes). Los anteriores son CAF antiguos usados en parte.
+    const reciente = Math.max(...propios.map((b) => b.desde));
+    for (const b of [...propios].sort((x, y) => y.desde - x.desde)) {
+      const esReciente = b.desde === reciente;
+      const entre = b.caf_despues ? `entre los CAF de ${b.caf_antes} y ${b.caf_despues}` : `después del último CAF (${b.caf_antes})`;
+      const n = (x) => x.toLocaleString('es-CL');
+      alertas.push({
+        nivel: esReciente ? 'alta' : 'media', codigo: 'FOLIOS_FUERA_DE_SISGEN',
+        titulo: esReciente ? 'Emitidas fuera de Sisgen' : 'Emitidas fuera de Sisgen (CAF antiguo)',
+        tipoSii: fila.tipoSii, tipoNombre: fila.tipoNombre, folio: b.desde, folioHasta: b.ultimo, sucursal: null, monto: null,
+        motivo: `El SII recibió ${n(b.cantidad)} folios (${n(b.desde)} al ${n(b.ultimo)}) de un CAF que no está en ninguna sucursal, ${entre}. ` +
+          (esReciente
+            ? 'Es el bloque más reciente: hay otro equipo emitiendo con este RUT (puede incluir meses anteriores).'
+            : 'Es un CAF más antiguo usado solo en parte: probablemente corresponde a meses anteriores.'),
+      });
+    }
+  }
+}
+
 /** Totales Sisgen vs SII para los tipos que el SII entrega con detalle (uno a uno). */
 function cuadreDetalle(documentos, docsSii, tiposResumen) {
   const tipos = new Set([...documentos.map((d) => d.tipoSii), ...docsSii.map((d) => d.tipo_sii)]);
@@ -367,6 +400,8 @@ function cuadreDetalle(documentos, docsSii, tiposResumen) {
   return filas;
 }
 
+const TIPOS_VENTA = new Set([33, 34, 39, 41, 56, 110]);
+
 function resumir(documentos) {
   const porEstado = Object.fromEntries(Object.values(ESTADOS).map((e) => [e, 0]));
   const suc = new Map();
@@ -379,8 +414,9 @@ function resumir(documentos) {
     if (d.enBlanco) enBlanco++;
     if (d.sinXml) sinXml++;
     const monto = d.montoSisgen ?? 0;
-    // NC resta en el total vendido
-    const signo = d.tipoSii === 61 ? -1 : 1;
+    // Total vendido: facturas, boletas y notas de débito suman; NC resta. Guías de despacho (52)
+    // y documentos internos sin tipo SII (OV, NV, GD…) no son venta y no se suman.
+    const signo = d.tipoSii === 61 ? -1 : TIPOS_VENTA.has(d.tipoSii) ? 1 : 0;
     montoTotal += signo * monto;
 
     const ks = d.sucursal ?? '(no está en Sisgen)';
