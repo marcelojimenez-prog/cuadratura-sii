@@ -1,5 +1,41 @@
 import { useMemo, useState } from 'react';
-import { numero, pesos, NIVEL_INFO } from '../util.js';
+import { numero, pesos } from '../util.js';
+
+// Sigla del documento como en Sisgen
+const SIGLA = { 33: 'FE', 34: 'FX', 39: 'BE', 41: 'BX', 52: 'GE', 56: 'DE', 61: 'NE', 110: 'FEX' };
+
+/** Qué pasa, en pocas palabras. */
+export function fraseAlerta(a) {
+  if (a.folioVencido) return a.codigo === 'SALTO_FOLIO' ? 'Folios vencidos: anular en el SII' : 'CAF vencido: anular en el SII';
+  switch (a.codigo) {
+    case 'FALTA_EN_SII': return 'No llegó al SII';
+    case 'RECHAZADO': return 'Rechazado por el SII';
+    case 'MONTO_DISTINTO': return 'Monto distinto al del SII';
+    case 'REPARO': return 'Aceptado con reparos';
+    case 'SOLO_EN_SII': return 'Está en el SII, no en Sisgen';
+    case 'ANULADO': return 'Anulado en el SII';
+    case 'DOCUMENTO_EN_BLANCO': return 'Documento en blanco';
+    case 'SIN_XML': return 'Sin XML: no se envió';
+    case 'FOLIO_DUPLICADO': return 'Folio usado dos veces';
+    case 'FOLIO_DE_OTRA_SUCURSAL': return 'Folio de otra sucursal';
+    case 'FOLIO_SIN_CAF': return 'Folio sin CAF';
+    case 'SALTO_FOLIO': return 'Folios sin emitir';
+    case 'FOLIO_OTRO_MES': return 'Emitidos en otro mes';
+    case 'FOLIOS_FUERA_DE_SISGEN': return 'Emitidos fuera de Sisgen';
+    case 'FOLIOS_POR_VENCER': return `Folios por vencer (${numero(a.sinUsar)} sin usar)`;
+    case 'FOLIOS_VENCIDOS': return `Folios vencidos sin usar (${numero(a.sinUsar)})`;
+    default: return a.titulo;
+  }
+}
+
+/** "BE N° 430.771", "BE N° 1.000 al 1.020" o "BE · total del mes". */
+export function documentoAlerta(a) {
+  const s = SIGLA[a.tipoSii] ?? a.tipoNombre ?? '';
+  if (a.folio == null) return `${s} · total del mes`;
+  return a.folioHasta ? `${s} N° ${numero(a.folio)} al ${numero(a.folioHasta)}` : `${s} N° ${numero(a.folio)}`;
+}
+
+const NIVELES = { alta: 'Urgentes', media: 'Por revisar', baja: 'Informativas' };
 
 export default function Alertas({ alertas, irADocumentos }) {
   const [sucursal, setSucursal] = useState('');
@@ -17,45 +53,46 @@ export default function Alertas({ alertas, irADocumentos }) {
     return <div className="alert alert-success">Sin alertas: todos los documentos del periodo cuadran con el SII.</div>;
   }
 
+  const verDocumento = (a) => a.folio != null && !a.folioHasta && !['SALTO_FOLIO', 'FOLIO_OTRO_MES', 'FOLIOS_FUERA_DE_SISGEN'].includes(a.codigo);
+
   return (
     <div className="card tarjeta">
       <div className="card-header d-flex flex-wrap gap-2 align-items-center">
-        <span className="me-auto">{visibles.length} alertas</span>
+        <span className="me-auto fw-semibold">{visibles.length} alertas</span>
         <select className="form-select form-select-sm w-auto" value={nivel} onChange={(e) => setNivel(e.target.value)} aria-label="Nivel">
-          <option value="">Todos los niveles</option>
-          {Object.entries(NIVEL_INFO).map(([k, v]) => <option key={k} value={k}>{v.texto}</option>)}
+          <option value="">Todas</option>
+          {Object.entries(NIVELES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
-        <select className="form-select form-select-sm w-auto" value={sucursal} onChange={(e) => setSucursal(e.target.value)} aria-label="Sucursal">
-          <option value="">Todas las sucursales</option>
-          {sucursales.map((s) => <option key={s}>{s}</option>)}
-        </select>
+        {sucursales.length > 1 && (
+          <select className="form-select form-select-sm w-auto" value={sucursal} onChange={(e) => setSucursal(e.target.value)} aria-label="Sucursal">
+            <option value="">Todas las sucursales</option>
+            {sucursales.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        )}
       </div>
-      <ul className="list-group list-group-flush">
-        {visibles.map((a, i) => (
-          <li key={i} className={`list-group-item alerta-item nivel-${a.nivel}`}>
-            <div className="d-flex justify-content-between flex-wrap gap-2">
-              <div>
-                <span className={`badge text-bg-${NIVEL_INFO[a.nivel].color} me-2`}>{NIVEL_INFO[a.nivel].texto}</span>
-                <strong>{a.titulo}</strong>
-                {a.adicionales?.map((t) => <span key={t} className="badge text-bg-light ms-2">{t}</span>)}
-              </div>
-              <span className="small text-secondary">{a.sucursal ?? 'No registrado en ninguna sucursal'}</span>
-            </div>
-            <div className="mt-1">
-              {a.tipoNombre}{' '}
-              {a.folio == null ? <>(total del mes)</>
-                : a.folioHasta ? <>folios {numero(a.folio)} al {numero(a.folioHasta)}</> : <>folio <strong>{numero(a.folio)}</strong></>}
-              {a.monto != null && <span className="text-secondary"> · {pesos(a.monto)}</span>}
-            </div>
-            {a.motivo && <div className="small text-secondary">{a.motivo}</div>}
-            {a.folio != null && !['SALTO_FOLIO', 'FOLIO_OTRO_MES', 'FOLIOS_FUERA_DE_SISGEN'].includes(a.codigo) && (
-              <button className="btn btn-link btn-sm p-0 mt-1" onClick={() => irADocumentos({ buscar: String(a.folio), tipo: String(a.tipoSii) })}>
-                Ver documento
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      <div className="table-responsive">
+        <table className="table table-sm table-hover align-middle mb-0 tabla-alertas">
+          <thead>
+            <tr><th aria-label="Nivel" /><th>Documento</th><th className="text-end">Monto</th><th>Sucursal</th><th>Qué pasa</th><th aria-label="Acciones" /></tr>
+          </thead>
+          <tbody>
+            {visibles.map((a, i) => (
+              <tr key={i}>
+                <td><span className={`punto-nivel nivel-${a.nivel}`} title={NIVELES[a.nivel]} /></td>
+                <td className="fw-semibold text-nowrap">{documentoAlerta(a)}</td>
+                <td className="text-end tabla-num text-nowrap">{a.monto != null ? pesos(a.monto) : ''}</td>
+                <td className="small text-secondary">{a.sucursal ?? '—'}</td>
+                <td className={a.nivel === 'alta' ? 'text-danger' : ''} title={a.motivo ?? ''}>{fraseAlerta(a)}</td>
+                <td className="text-end">
+                  {verDocumento(a) && (
+                    <button className="btn btn-link btn-sm p-0" onClick={() => irADocumentos({ buscar: String(a.folio), tipo: String(a.tipoSii) })}>Ver</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

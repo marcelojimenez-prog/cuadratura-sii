@@ -1,0 +1,42 @@
+AGENTE SISGEN (Portal Sisgen · Cuadratura SII)
+===============================================
+
+Que hace
+--------
+Servicio de Windows que se instala en el equipo donde corre Sisgen/DTESERVICE de cada sucursal.
+En cuanto se emite un documento, lo envia al Portal Sisgen junto con su estado de envio al SII:
+
+  - XML de cada documento   -> procesos\DTE\AAMM\*.xml
+  - Envio al SII (Track ID, aceptado/rechazado) -> datos\trazadte.dbf y datos\trazabol.dbf (DTESERVICE)
+
+Solo LEE. Nunca modifica, mueve ni bloquea archivos de Sisgen ni de DTESERVICE.
+Si no hay internet, no se pierde nada: lo pendiente se envia cuando vuelve la conexion.
+Funciona en Windows 7, 8, 10, 11 y Server (requiere .NET Framework 4, ya incluido en Windows).
+
+Instalacion (recomendada)
+-------------------------
+1. En el portal: ficha del cliente -> "Instalar agente en un servidor nuevo". Copia la llave.
+2. Copia InstalarAgenteSisgen.exe al equipo y ejecutalo (pide permiso de administrador).
+3. Siguiente -> elige la carpeta de Sisgen (se detecta sola) -> pega la llave -> Instalar.
+   Para actualizar o desinstalar, vuelve a ejecutar InstalarAgenteSisgen.exe.
+
+Instalacion manual (alternativa)
+--------------------------------
+1. En el portal: ficha del cliente -> sucursal -> "Conectar agente". Copia la llave (se muestra una vez).
+2. Copia esta carpeta al equipo, por ejemplo a C:\SisgenAgente
+3. Copia agente.ini.ejemplo como agente.ini y completa:
+     portal = direccion del portal
+     llave  = la llave del paso 1
+     sisgen = carpeta de Sisgen (ej. C:\sisgen)
+4. Clic derecho en instalar.bat -> Ejecutar como administrador.
+   Primero hace una prueba; si todo esta bien, instala y arranca el servicio "Agente Sisgen (Portal)".
+
+Revisar
+-------
+- Registros diarios: carpeta logs\
+- Prueba manual en ventana:  SisgenAgente.exe --consola   (Ctrl+C para salir)
+- En el portal, la sucursal aparece como "Agente en linea".
+
+Quitar
+------
+Clic derecho en desinstalar.bat -> Ejecutar como administrador.

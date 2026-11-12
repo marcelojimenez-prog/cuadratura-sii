@@ -1,19 +1,27 @@
 // Agrega una sucursal Sisgen a partir de su ruta de red, la importa y la sincroniza con el SII.
-// Uso: npm run agregar -- "\\host\sisgen" [YYYY-MM]
+// Uso: npm run agregar -- "\\host\sisgen" [YYYY-MM] [--cliente "Nombre del grupo"]
 //  - Lee RUT y razón social desde datos\empres.dbf (solo lectura).
 //  - Si el RUT ya existe en la configuración se agrega como sucursal; si no, crea la razón social.
-//  - Certificado: busca *.pfx en procesos\certificado y prueba las claves ya configuradas
-//    (nunca las muestra). Si ninguna sirve, queda sin certificado y se avisa.
+//  - Certificado: reutiliza la clave solo si es el mismo archivo .pfx ya configurado; si no,
+//    queda sin certificado y se avisa (nunca se prueban claves en otros certificados).
+//  - Cliente del portal: una razón social nueva queda en un cliente con su mismo nombre, o en el
+//    grupo indicado con --cliente (se crea si no existe).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { RAIZ } from '../server/config.js';
+import { RAIZ, cargarConfig } from '../server/config.js';
+import { abrirDb, getDb } from '../server/db.js';
+import { guardarCliente, buscarCliente, asignarEmpresa } from '../server/usuarios.js';
 import { leerEmpresa } from '../server/lib/sisgen/importar.js';
 import { cargarCertificado } from '../server/lib/sii/certificado.js';
 
-const [raizArg, periodo = periodoAnterior()] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const iCliente = args.indexOf('--cliente');
+const clienteArg = iCliente >= 0 ? args.splice(iCliente, 2)[1]?.trim() : null;
+if (iCliente >= 0 && !clienteArg) { console.error('Falta el nombre después de --cliente'); process.exit(1); }
+const [raizArg, periodo = periodoAnterior()] = args;
 if (!raizArg || !/^\d{4}-\d{2}$/.test(periodo)) {
-  console.error('Uso: npm run agregar -- "\\\\host\\sisgen" [YYYY-MM]');
+  console.error('Uso: npm run agregar -- "\\\\host\\sisgen" [YYYY-MM] [--cliente "Nombre del grupo"]');
   process.exit(1);
 }
 const raiz = raizArg.replace(/[\\/]+$/, '');
@@ -100,3 +108,24 @@ if (!tablasF1.some((t) => t.periodo === `${anio}-${mes}`)) {
 const correr = (script, args) => spawnSync(process.execPath, ['--no-warnings', path.join(RAIZ, 'scripts', script), ...args], { stdio: 'inherit', cwd: RAIZ });
 correr('importar-sisgen.js', [periodo, emp.rut, codigo]);
 if (certificadoOk(empresa.certificado)) correr('sincronizar-sii.js', [periodo, emp.rut]);
+
+// 6) Cliente del portal (grupo). Nunca mueve una razón social que ya tiene cliente.
+abrirDb(cargarConfig().rutaBaseDatos);
+const fila = getDb()
+  .prepare('SELECT e.cliente_id, c.nombre FROM empresas e LEFT JOIN clientes c ON c.id = e.cliente_id WHERE e.rut = ?')
+  .get(emp.rut);
+if (!fila) {
+  console.log('  ! La razón social no quedó en la base (¿falló la importación?). Asígnale cliente en Administración.');
+} else if (fila.cliente_id) {
+  if (clienteArg && clienteArg.toLowerCase() !== fila.nombre.toLowerCase()) {
+    console.log(`  ! Ya pertenece al cliente "${fila.nombre}"; no se cambió. Para moverla usa Administración → Razones sociales.`);
+  } else {
+    console.log(`  Cliente del portal: ${fila.nombre}`);
+  }
+} else {
+  const nombre = clienteArg || nombreBonito(emp.razonSocial.trim());
+  const existia = !!buscarCliente(nombre);
+  const c = guardarCliente(nombre);
+  asignarEmpresa(emp.rut, c.id);
+  console.log(`  Cliente del portal: ${c.nombre} (${existia ? 'grupo existente' : 'nuevo'})`);
+}

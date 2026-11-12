@@ -121,3 +121,99 @@ a, .btn-link { color: var(--marca); }
 .punto-estado { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .5rem; vertical-align: .05rem; }
 .punto-ok { background: var(--bs-success); }
 .punto-alerta { background: var(--bs-warning); }
+
+/* ===== Selector de mes (calendario) ===== */
+.selector-mes-boton { min-width: 12rem; cursor: pointer; }
+.selector-mes-icono { color: #3697D9; margin-right: .45rem; }
+.selector-mes-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 1050; width: 16.5rem; background: #fff;
+  border: 1px solid #dfe3e8; border-radius: .6rem; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: .75rem; }
+.selector-mes-grilla { display: grid; grid-template-columns: repeat(3, 1fr); gap: .35rem; }
+.selector-mes-celda { border: 1px solid transparent; background: #f4f6f8; border-radius: .4rem; padding: .45rem 0; font-size: .875rem; color: #9aa0a6; }
+.selector-mes-celda.con-datos { background: #e9f1fb; color: #1D1D1B; font-weight: 600; }
+.selector-mes-celda.con-datos:hover { border-color: #93B5E5; }
+.selector-mes-celda.activo { background: #3697D9; color: #fff; }
+.selector-mes-celda:disabled { cursor: default; }
+
+/* ===== Estructura: menú lateral + contenido ===== */
+.disposicion { min-height: 100vh; }
+.menu-lateral { position: fixed; inset: 0 auto 0 0; width: 15rem; background: #fff; border-right: 1px solid #e3e6ea;
+  padding: 1rem .75rem; overflow-y: auto; z-index: 1040; display: flex; flex-direction: column; }
+.contenido { margin-left: 15rem; padding: 1.25rem 2rem 3rem; max-width: 92rem; }
+.marca-menu { display: flex; align-items: center; gap: .6rem; padding: .25rem .5rem 1rem; color: var(--sis-negro); }
+.logo-menu { height: 2.1rem; }
+.marca-menu .texto-marca { font-size: .98rem; }
+.marca-menu .texto-marca small { font-size: .66rem; }
+.menu-grupo { display: flex; flex-direction: column; gap: 2px; }
+.menu-titulo { font-size: .72rem; text-transform: uppercase; letter-spacing: .5px; color: #9aa0a6; margin: 1.1rem .75rem .35rem; }
+.menu-item { display: flex; align-items: center; gap: .65rem; width: 100%; border: 0; background: transparent; text-align: left;
+  padding: .55rem .75rem; border-radius: .5rem; color: #4a4f55; font-size: .95rem; }
+.menu-item:hover { background: #f4f6f8; color: var(--sis-negro); }
+.menu-item.activo { background: #e9f1fb; color: #1f6fab; font-weight: 600; }
+.menu-item svg { flex: none; }
+.menu-usuario-info { display: flex; align-items: center; gap: .6rem; padding: .25rem .75rem .5rem; }
+.menu-usuario-info .avatar { width: 2rem; height: 2rem; font-size: .75rem; }
+.menu-usuario-info strong { display: block; font-size: .88rem; line-height: 1.2; }
+.menu-usuario-info small { display: block; color: #8a9096; font-size: .75rem; }
+.migas { font-size: .85rem; color: #8a9096; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .1rem; }
+.migas .separador { margin: 0 .4rem; color: #b6bbc0; }
+.migas .actual { color: var(--sis-negro); font-weight: 600; }
+.migas .btn-link { font-size: .85rem; text-decoration: none; }
+.barra-movil { display: none; }
+.velo-menu { display: none; }
+
+/* Pestañas dentro de cada pantalla: botones redondeados, fáciles de tocar */
+.pestanas-empresa { display: flex; flex-wrap: wrap; gap: .4rem; border-bottom: 1px solid #e3e6ea; padding-bottom: .75rem; }
+.pestana { border: 1px solid #d5d9de; background: #fff; color: #4a4f55; border-radius: 999px; padding: .4rem 1rem; font-size: .92rem; }
+.pestana:hover { background: #f4f6f8; }
+.pestana.activa { background: #3697D9; border-color: #3697D9; color: #fff; font-weight: 600; }
+.contador-pestana { display: inline-block; margin-left: .45rem; min-width: 1.35rem; padding: 0 .35rem; border-radius: 999px;
+  background: #dc3545; color: #fff; font-size: .75rem; font-weight: 700; line-height: 1.35rem; text-align: center; }
+.pestana.activa .contador-pestana { background: #fff; color: #dc3545; }
+
+@media (max-width: 991.98px) {
+  .barra-movil { display: flex; align-items: center; gap: .5rem; position: sticky; top: 0; z-index: 1030; background: #fff;
+    border-bottom: 1px solid #e3e6ea; padding: .4rem .75rem; }
+  .logo-movil { height: 1.9rem; }
+  .menu-lateral { transform: translateX(-100%); transition: transform .2s ease; box-shadow: 0 0 24px rgba(0,0,0,.15); }
+  .menu-lateral.abierto { transform: none; }
+  .velo-menu { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 1035; }
+  .contenido { margin-left: 0; padding: 1rem 1rem 3rem; }
+}
+
+/* ===== Tabla estilo "Fichas de Clientes" ===== */
+.titulo-fichas { color: #6f9fd8; font-weight: 400; font-size: 2rem; }
+.tabla-fichas { background: #fff; }
+.tabla-fichas thead th { font-weight: 700; border-bottom-width: 1px; vertical-align: bottom; white-space: nowrap; }
+.tabla-fichas .encabezado-orden { border: 0; background: transparent; padding: 0; font-weight: 700; color: inherit; display: inline-flex; align-items: center; gap: .5rem; }
+.tabla-fichas .flechas { display: inline-flex; flex-direction: column; font-size: .55rem; line-height: .7; color: #c7cbd0; }
+.tabla-fichas .flechas.asc span:first-child, .tabla-fichas .flechas.desc span:last-child { color: #555; }
+.boton-accion { padding: .2rem .45rem; }
+
+.inicio-vacio { background: #fff; border-radius: .75rem; padding: 2rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); max-width: 44rem; }
+
+/* ===== Alertas en una fila ===== */
+.tabla-alertas th { font-size: .8rem; color: #6c757d; font-weight: 600; }
+.tabla-alertas td { padding-top: .55rem; padding-bottom: .55rem; }
+.punto-nivel { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; }
+.punto-nivel.nivel-alta { background: #dc3545; }
+.punto-nivel.nivel-media { background: #f0ad00; }
+.punto-nivel.nivel-baja { background: #b6bbc0; }
+
+/* ===== "Cómo va el mes" simple ===== */
+.aviso-pendiente { display: flex; justify-content: space-between; align-items: center; gap: 1rem; border: 0; text-align: left;
+  background: #fdecee; color: #a52834; border-radius: .75rem; padding: .85rem 1.1rem; font-size: 1rem; }
+.aviso-pendiente:hover { background: #fbdfe2; }
+.aviso-pendiente .enlace { text-decoration: underline; white-space: nowrap; }
+.aviso-ok { background: #e8f5ee; color: #1e6b45; border-radius: .75rem; padding: .85rem 1.1rem; font-weight: 600; }
+.tabla-tipos th { font-size: .8rem; color: #6c757d; font-weight: 600; }
+.boton-volver { border: 0; background: transparent; color: #3697D9; padding: 0; font-size: .9rem; }
+.boton-volver:hover { text-decoration: underline; }
+
+/* ===== Resumen estilo Registro de Compras y Ventas del SII ===== */
+.tabla-rcv { background: #fff; border: 1px solid #dfe3e8; }
+.tabla-rcv thead th { background: #e9f1fb; color: #1d1d1b; font-weight: 600; font-size: .85rem; border-bottom: 1px solid #c9d8ee; vertical-align: middle; }
+.tabla-rcv td { vertical-align: middle; }
+.tabla-rcv td .btn-link { text-decoration: none; }
+.tabla-rcv td .btn-link:hover { text-decoration: underline; }
+.linea-aviso { color: #a52834; font-size: .95rem; }
+.linea-aviso.gris { color: #6c757d; }

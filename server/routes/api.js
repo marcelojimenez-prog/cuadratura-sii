@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { listarEmpresas } from '../db.js';
 import { calcularCuadratura, estadoEmpresa } from '../lib/cuadratura/resumen.js';
-import { documentoConSucursal } from '../db.js';
+import { documentoConSucursal, getDb } from '../db.js';
+import { xmlGuardado } from '../agentes.js';
+
+const datosImpresion = (rut) =>
+  getDb().prepare('SELECT oficina_sii, resolucion_numero, resolucion_fecha FROM empresas WHERE rut = ?').get(rut) ?? null;
 import { prepararDocumento } from '../lib/documentos/servicio.js';
 import { cargarConfig } from '../config.js';
 import authRouter, { requiereSesion } from './auth.js';
@@ -43,6 +47,51 @@ r.get('/inicio', (req, res) => {
 });
 
 /**
+ * Búsqueda de documentos en todo el historial de una razón social (XML archivados por el agente,
+ * desde 2001, y documentos importados de Sisgen). Filtros opcionales: tipo, folio, fecha desde/hasta
+ * y texto (RUT o nombre del receptor). Página de 50.
+ */
+r.get('/buscar/:rut', (req, res) => {
+  const { rut } = req.params;
+  if (!puedeVer(req.usuario, rut)) return noEncontrado(res);
+  const q = req.query;
+  const fecha = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v ?? '') ? v : null);
+  const entero = (v) => (/^\d{1,10}$/.test(v ?? '') ? Number(v) : null);
+  const tipo = entero(q.tipo), folio = entero(q.folio), desde = fecha(q.desde), hasta = fecha(q.hasta);
+  const texto = String(q.texto ?? '').trim().slice(0, 60);
+  const pagina = Math.max(0, entero(q.pagina) ?? 0);
+  const filtros = [], args = [];
+  if (tipo) { filtros.push('tipo_sii = ?'); args.push(tipo); }
+  if (folio) { filtros.push('folio = ?'); args.push(folio); }
+  if (desde) { filtros.push('fecha >= ?'); args.push(desde); }
+  if (hasta) { filtros.push('fecha <= ?'); args.push(hasta); }
+  if (texto) {
+    const rutLimpio = texto.replace(/[.\s]/g, '').toUpperCase();
+    filtros.push("(REPLACE(UPPER(COALESCE(rut_receptor,'')), '.', '') LIKE ? OR UPPER(COALESCE(nombre_receptor,'')) LIKE ?)");
+    args.push(`%${rutLimpio}%`, `%${texto.toUpperCase()}%`);
+  }
+  const donde = filtros.length ? `WHERE ${filtros.join(' AND ')}` : '';
+  const filas = getDb().prepare(
+    `SELECT * FROM (
+       SELECT x.tipo_sii, x.folio, x.fecha, x.rut_receptor, x.nombre_receptor, x.total, s.nombre AS sucursal, 1 AS en_portal
+         FROM xml_documentos x LEFT JOIN sucursales s ON s.id = x.sucursal_id WHERE x.rut_emisor = ?
+       UNION ALL
+       SELECT d.tipo_sii, d.folio, d.fecha, d.rut_receptor, d.nombre_receptor, d.total, s.nombre, 0
+         FROM docs_sisgen d JOIN sucursales s ON s.id = d.sucursal_id
+        WHERE d.rut_emisor = ? AND d.tipo_sii IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM xml_documentos x WHERE x.rut_emisor = d.rut_emisor AND x.tipo_sii = d.tipo_sii AND x.folio = d.folio)
+     ) ${donde}
+     ORDER BY fecha DESC, folio DESC LIMIT 51 OFFSET ?`
+  ).all(rut, rut, ...args, pagina * 50);
+  const total = getDb().prepare('SELECT COUNT(*) n, MIN(fecha) desde FROM xml_documentos WHERE rut_emisor = ?').get(rut);
+  res.json({
+    documentos: filas.slice(0, 50).map((f) => ({ ...f, enPortal: !!f.en_portal, en_portal: undefined })),
+    hayMas: filas.length > 50,
+    archivo: { documentos: total.n, desde: total.desde },
+  });
+});
+
+/**
  * Descarga del XML o del PDF (representación impresa) de un documento.
  * GET /api/documento/:rut/:tipo/:folio/xml|pdf?sucursal=Nombre
  */
@@ -55,13 +104,22 @@ r.get('/documento/:rut/:tipo/:folio/:formato', async (req, res, next) => {
     }
     if (!puedeVer(req.usuario, rut)) throw Object.assign(new Error('Documento no encontrado'), { status: 404 });
     const doc = documentoConSucursal(rut, tipo, folio, req.query.sucursal || null);
-    if (!doc) throw Object.assign(new Error('Documento no encontrado en Sisgen'), { status: 404 });
-    if (!doc.ruta_procesos) throw Object.assign(new Error('La sucursal no tiene configurada su carpeta procesos'), { status: 404 });
+    // Primero el XML archivado en el portal (no depende de que la sucursal esté encendida)
+    const xmlTexto = xmlGuardado(rut, tipo, folio);
+    if (!doc && !xmlTexto) throw Object.assign(new Error('Documento no encontrado'), { status: 404 });
+    if (!xmlTexto && !doc.ruta_procesos) throw Object.assign(new Error('El XML de este documento aún no está en el portal'), { status: 404 });
+    if (formato === 'xml' && xmlTexto) {
+      res.set('Content-Type', 'application/xml; charset=ISO-8859-1');
+      res.set('Content-Disposition', `attachment; filename="T${tipo}F${folio}.xml"`);
+      return res.send(Buffer.from(xmlTexto, 'latin1'));
+    }
+    const emp = datosImpresion(rut);
     // La lectura por red y el armado se hacen en un hilo aparte con tiempo máximo:
     // una sucursal sin conexión nunca bloquea el portal
     const datos = await prepararDocumento({
-      formato, tipo, folio, fecha: doc.fecha, periodo: doc.periodo, tipoSisgen: doc.tipo_sisgen,
-      sucursal: doc.sucursal, rutaDatos: doc.ruta_datos, rutaProcesos: doc.ruta_procesos,
+      formato, tipo, folio, fecha: doc?.fecha, periodo: doc?.periodo, tipoSisgen: doc?.tipo_sisgen,
+      sucursal: doc?.sucursal ?? 'archivo', rutaDatos: doc?.ruta_datos, rutaProcesos: doc?.ruta_procesos, xmlTexto,
+      extrasBase: { oficinaSii: emp?.oficina_sii, resolucionNumero: emp?.resolucion_numero, resolucionAnio: emp?.resolucion_fecha?.slice(0, 4) },
       mostrarLogo: cargarConfig().empresas.find((e) => e.rut === rut)?.pdf?.mostrarLogo === true,
     });
     const nombre = `T${tipo}F${folio}`;

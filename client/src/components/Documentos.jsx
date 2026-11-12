@@ -26,6 +26,27 @@ function BotonesArchivo({ rut, d, chico }) {
 const folioAjeno = (d) => !!(d.sucursal && d.cafSucursal && d.cafSucursal !== d.sucursal);
 const VACIO = { sucursal: '', tipo: '', estado: '', buscar: '' };
 
+/**
+ * Filtro de estado simple para el cliente. "Rechazado" agrupa lo que el SII no aceptó (rechazado o
+ * no recibido), salvo los de CAF vencido, que tienen su propia opción. El detalle se ve en cada fila.
+ * Los de folio de otra sucursal tienen una opción por sucursal: "OTRA:<nombre>".
+ */
+function cumpleEstado(d, filtro) {
+  switch (filtro) {
+    case 'ACEPTADO': return d.estado === 'OK';
+    case 'RECHAZADO': return (d.estado === 'RECHAZADO' || d.estado === 'FALTA_EN_SII') && !d.cafVencido;
+    case 'CAF_VENCIDO': return !!d.cafVencido;
+    case 'MONTO_DISTINTO': return d.estado === 'MONTO_DISTINTO';
+    case 'EN_BLANCO': return d.enBlanco;
+    // filtros específicos que pueden llegar desde el resumen o las alertas
+    case 'SIN_XML': return d.sinXml;
+    case 'OTRA_SUCURSAL': return folioAjeno(d);
+    default:
+      if (filtro.startsWith('OTRA:')) return folioAjeno(d) && d.cafSucursal === filtro.slice(5);
+      return d.estado === filtro;
+  }
+}
+
 export default function Documentos({ datos, filtroInicial }) {
   const [f, setF] = useState(VACIO);
   const [pagina, setPagina] = useState(0);
@@ -42,14 +63,15 @@ export default function Documentos({ datos, filtroInicial }) {
   const docs = datos.documentos;
   const sucursales = useMemo(() => [...new Set(docs.map((d) => d.sucursal).filter(Boolean))].sort(), [docs]);
   const tipos = useMemo(() => [...new Map(docs.map((d) => [d.tipoSii, d.tipoNombre])).entries()], [docs]);
+  // Sucursales dueñas de folios usados por otra sucursal (una opción de filtro por cada una)
+  const sucursalesDuenas = useMemo(() => [...new Set(docs.filter(folioAjeno).map((d) => d.cafSucursal))].sort(), [docs]);
 
   const filtrados = useMemo(() => {
     const q = f.buscar.trim().toLowerCase();
     return docs.filter((d) =>
       (!f.sucursal || d.sucursal === f.sucursal) &&
       (!f.tipo || String(d.tipoSii) === f.tipo) &&
-      (!f.estado || (f.estado === 'EN_BLANCO' ? d.enBlanco : f.estado === 'SIN_XML' ? d.sinXml
-        : f.estado === 'OTRA_SUCURSAL' ? folioAjeno(d) : d.estado === f.estado)) &&
+      (!f.estado || cumpleEstado(d, f.estado)) &&
       (!q || String(d.folio).includes(q) || (d.rutReceptor ?? '').toLowerCase().includes(q) || (d.nombreReceptor ?? '').toLowerCase().includes(q))
     );
   }, [docs, f]);
@@ -98,10 +120,16 @@ export default function Documentos({ datos, filtroInicial }) {
           <div className="col-6 col-md-2">
             <select className="form-select form-select-sm" value={f.estado} onChange={set('estado')} aria-label="Estado">
               <option value="">Todos los estados</option>
-              {Object.entries(ESTADO_INFO).map(([k, v]) => <option key={k} value={k}>{v.texto}</option>)}
+              <option value="ACEPTADO">Aceptado</option>
+              <option value="RECHAZADO">Rechazado</option>
+              <option value="CAF_VENCIDO">CAF vencido</option>
+              <option value="MONTO_DISTINTO">Monto distinto</option>
               <option value="EN_BLANCO">Documento en blanco</option>
-              <option value="OTRA_SUCURSAL">Folio de otra sucursal</option>
-              <option value="SIN_XML">Sin XML generado</option>
+              {sucursalesDuenas.map((s) => <option key={s} value={`OTRA:${s}`}>Folio corresponde a {s}</option>)}
+              {/* filtro específico que llega desde el resumen o las alertas */}
+              {f.estado && !['ACEPTADO', 'RECHAZADO', 'CAF_VENCIDO', 'MONTO_DISTINTO', 'EN_BLANCO'].includes(f.estado) && !f.estado.startsWith('OTRA:') && (
+                <option value={f.estado}>{ESTADO_INFO[f.estado]?.texto ?? (f.estado === 'SIN_XML' ? 'Sin XML generado' : 'Folio de otra sucursal')}</option>
+              )}
             </select>
           </div>
           <div className="col-6 col-md-2 d-flex gap-2 justify-content-end">
@@ -133,6 +161,7 @@ export default function Documentos({ datos, filtroInicial }) {
                 <td className="tabla-num">{pesos(d.montoSisgen ?? d.montoSii)}</td>
                 <td>
                   <span className={`badge text-bg-${ESTADO_INFO[d.estado].color}`}>{ESTADO_INFO[d.estado].texto}</span>
+                  {d.cafVencido && <span className="badge text-bg-danger ms-1" title="El CAF venció: hay que anular el folio en el SII">CAF vencido</span>}
                   {d.enBlanco && <span className="badge text-bg-dark ms-1">En blanco</span>}
                   {d.sinXml && <span className="badge text-bg-danger ms-1">Sin XML</span>}
                 </td>
@@ -180,6 +209,12 @@ function Detalle({ d, rut, cerrar }) {
                 <div className="alert alert-warning py-2">
                   <strong>Folio de otra sucursal</strong> — emitido por {d.sucursal}, pero corresponde al CAF de{' '}
                   <strong>{d.cafSucursal}</strong> ({numero(d.cafDesde)} al {numero(d.cafHasta)}).
+                </div>
+              )}
+              {d.cafVencido && (
+                <div className="alert alert-danger py-2">
+                  <strong>CAF vencido</strong> — el SII no recibió este documento y el CAF de su folio venció
+                  el {fecha(d.venceCaf)}: ya no se puede enviar; hay que anular el folio en el SII.
                 </div>
               )}
               {d.sinXml && (

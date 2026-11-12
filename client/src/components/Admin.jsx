@@ -4,7 +4,7 @@ import { api } from '../util.js';
 const fechaHora = (s) => (s ? new Date(s.replace(' ', 'T')).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
 /** Panel de administración: solo usuarios Sisgen (rol admin). */
-export default function Admin({ usuarioActual, pestanaInicial = 'usuarios' }) {
+export default function Admin({ usuarioActual, pestanaInicial = 'usuarios', titulo = 'Administración', pestanas: visibles = null }) {
   const [pestana, setPestana] = useState(pestanaInicial);
   const [datos, setDatos] = useState(null);
   const [error, setError] = useState(null);
@@ -35,24 +35,20 @@ export default function Admin({ usuarioActual, pestanaInicial = 'usuarios' }) {
     ['clientes', 'Clientes', datos?.clientes.length],
     ['empresas', 'Razones sociales', sinCliente ? <span className="badge text-bg-warning ms-1" title="Sin cliente asignado">{sinCliente}</span> : datos?.empresas.length],
     ['ingresos', 'Registro de ingresos'],
-  ];
+  ].filter(([id]) => !visibles || visibles.includes(id));
 
   return (
     <>
-      <div className="mb-3">
-        <h1 className="h4 mb-0">Administración</h1>
-        <div className="text-secondary small">Clientes, razones sociales y usuarios del portal · solo equipo Sisgen</div>
-      </div>
+      <h1 className="h4 mb-3">{titulo}</h1>
 
-      <ul className="nav nav-tabs mb-3">
+      <div className="pestanas-empresa mb-3" role="tablist">
         {pestanas.map(([id, txt, n]) => (
-          <li className="nav-item" key={id}>
-            <button className={`nav-link ${pestana === id ? 'active' : ''}`} onClick={() => { setPestana(id); setAviso(null); }}>
-              {txt} {typeof n === 'number' ? <span className="text-secondary small">({n})</span> : n}
-            </button>
-          </li>
+          <button key={id} type="button" role="tab" aria-selected={pestana === id} className={`pestana ${pestana === id ? 'activa' : ''}`}
+            onClick={() => { setPestana(id); setAviso(null); }}>
+            {txt} {typeof n === 'number' ? <span className="text-secondary small">({n})</span> : n}
+          </button>
         ))}
-      </ul>
+      </div>
 
       {clave && (
         <div className="alert alert-success d-flex flex-wrap align-items-center gap-3" role="status">

@@ -8,7 +8,10 @@ import { generarPdf } from './pdf.js';
 
 parentPort.on('message', async (t) => {
   try {
-    const xml = elegirXml(rutasXml({ rutaProcesos: t.rutaProcesos, tipoSii: t.tipo, folio: t.folio, fecha: t.fecha }));
+    // XML archivado en el portal (subido por el agente) o, si no, el de la carpeta de la sucursal
+    const xml = t.xmlTexto
+      ? { texto: t.xmlTexto }
+      : elegirXml(rutasXml({ rutaProcesos: t.rutaProcesos, tipoSii: t.tipo, folio: t.folio, fecha: t.fecha }));
     if (!xml) {
       parentPort.postMessage({ id: t.id, status: 404, error: 'No se encontró el XML de este documento (no fue generado)' });
       return;
@@ -18,6 +21,8 @@ parentPort.on('message', async (t) => {
       return;
     }
     const extras = { ...extrasSucursal({ rutaDatos: t.rutaDatos, rutaProcesos: t.rutaProcesos }) };
+    // Sin acceso a la sucursal: oficina SII y resolución informadas por el agente
+    for (const [k, v] of Object.entries(t.extrasBase ?? {})) if (v && !extras[k]) extras[k] = v;
     // Sin logo por defecto: solo si la razón social lo tiene habilitado (config pdf.mostrarLogo)
     if (!t.mostrarLogo) extras.logo = null;
     // Si el XML no trae detalle (pasa con boletas), se usan las líneas de F2 de Sisgen

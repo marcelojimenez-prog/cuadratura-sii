@@ -1,0 +1,19 @@
+# Configuración del Agente Sisgen. Copia este archivo como agente.ini (misma carpeta que SisgenAgente.exe).
+
+# Dirección del Portal Sisgen
+portal=http://localhost:4100
+
+# Llave: se genera en el portal. Puede ser la llave de instalación del cliente (el agente crea solo
+# su razón social y sucursal al conectarse) o la llave de una sucursal ya existente.
+llave=sga_PEGAR_AQUI
+
+# Carpeta de Sisgen en este equipo (contiene "datos" y "procesos")
+sisgen=C:\sisgen
+
+# Opcionales
+# datos=C:\sisgen\datos           (si la carpeta de datos tiene otro nombre)
+# procesos=C:\sisgen\procesos
+# intervalo=30                    (segundos entre revisiones; además reacciona al instante a archivos nuevos)
+# horasVentas=3                   (cada cuántas horas se envían las ventas completas del mes desde F1)
+# diasTraza=3                    (días hacia atrás que se revisan en trazadte / trazabol)
+# desde=2026-11-12                (no enviar nada anterior; por defecto, el día de la instalación)

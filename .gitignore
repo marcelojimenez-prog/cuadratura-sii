@@ -14,3 +14,8 @@ certs/
 data/
 *.db
 *.log
+
+# Agente compilado y archivos de prueba
+agente/dist/
+herramientas/
+agente/SisgenAgente.zip

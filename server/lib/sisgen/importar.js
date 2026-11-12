@@ -298,17 +298,21 @@ export function leerCafs(carpetaProcesos) {
   for (const archivo of fs.readdirSync(dir)) {
     if (!/\.xml$/i.test(archivo)) continue;
     let m = /^t(\d+)d(\d+)h(\d+)\.xml$/i.exec(archivo);
-    let tipo, desde, hasta;
+    let tipo, desde, hasta, fechaAutorizacion = null;
+    // Del XML solo se extraen tipo, rango y fecha de autorización (<FA>); la llave privada no se usa
+    let xml = null;
+    try { xml = fs.readFileSync(path.join(dir, archivo), 'latin1'); } catch { /* sin acceso */ }
+    if (xml) fechaAutorizacion = /<FA>\s*(\d{4}-\d{2}-\d{2})\s*<\/FA>/i.exec(xml)?.[1] ?? null;
     if (m) {
       [tipo, desde, hasta] = m.slice(1).map(Number);
     } else {
-      const xml = fs.readFileSync(path.join(dir, archivo), 'latin1');
+      if (!xml) continue;
       const td = /<TD>\s*(\d+)\s*<\/TD>/i.exec(xml);
       const rng = /<RNG>\s*<D>\s*(\d+)\s*<\/D>\s*<H>\s*(\d+)\s*<\/H>\s*<\/RNG>/i.exec(xml);
       if (!td || !rng) continue;
       [tipo, desde, hasta] = [td[1], rng[1], rng[2]].map(Number);
     }
-    rangos.push({ tipoSii: tipo, desde, hasta, archivo });
+    rangos.push({ tipoSii: tipo, desde, hasta, archivo, fechaAutorizacion });
   }
   return rangos;
 }

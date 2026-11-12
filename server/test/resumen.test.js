@@ -27,3 +27,14 @@ test('una sucursal nunca leída deja la lectura más antigua en blanco', () => {
   assert.equal(f.lecturaMasAntigua, null);
   assert.equal(f.estado, 'sinDatos');
 });
+
+test('una razón social sin consulta al SII queda "sinSii" y sus alertas no suman al grupo', () => {
+  const sinSii = { rut: '3-5', documentos: 8, ok: 0, alertas: 15, urgentes: 15, siiConsultadoEn: null, montoTotal: 80 };
+  const ok = { rut: '2-7', documentos: 10, ok: 10, alertas: 0, urgentes: 0, siiConsultadoEn: 'x', montoTotal: 100 };
+  assert.equal(gravedadEmpresa(sinSii), 'sinSii');
+  const f = filaCliente({}, [sinSii, ok], []);
+  assert.equal(f.estado, 'sinSii');
+  assert.equal(f.urgentes, 0);
+  assert.equal(f.sinSii, 1);
+  assert.equal(f.montoTotal, 180);
+});

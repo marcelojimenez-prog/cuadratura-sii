@@ -7,14 +7,108 @@ import {
   adminsActivos, listarIngresos,
 } from '../usuarios.js';
 import { claveTemporal } from '../lib/auth/claves.js';
-import { listarEmpresas } from '../db.js';
+import { listarEmpresas, getDb } from '../db.js';
 import { estadoEmpresa, filaCliente, sucursalesEstado, numeroRut, gravedadEmpresa } from '../lib/cuadratura/resumen.js';
+import { generarLlaveAgente, generarLlaveInstalacion, activarAgente } from '../agentes.js';
+import { sincronizarEmpresa } from '../lib/sii/sincronizar.js';
+import { clienteRemoto } from '../lib/sii/clientes.js';
+import { agenteDisponible, estadoCertificado } from '../lib/sii/remoto.js';
 
 const r = Router();
 r.use(requiereAdmin);
 
+/**
+ * Inicio del equipo Sisgen: listado simple, una fila por razón social (sin agrupar por cliente) con
+ * sus sucursales. El mes y la cuadratura se ven al entrar a cada razón social.
+ */
+r.get('/razones', (_req, res) => {
+  const filas = listarEmpresas().map((e) => {
+    const sucs = sucursalesEstado(e.rut);
+    const lecturas = sucs.map((s) => s.ultimaLectura).filter(Boolean).sort();
+    return {
+      rut: e.rut, razonSocial: e.razonSocial, esDemo: e.esDemo, clienteId: e.clienteId,
+      periodo: e.ultimoPeriodoSisgen ?? e.periodos[0] ?? null,
+      sucursales: sucs.length, nombresSucursales: sucs.map((s) => s.nombre),
+      sucursalesDesactualizadas: sucs.filter((s) => s.desactualizada).length,
+      lecturaMasAntigua: sucs.some((s) => !s.ultimaLectura) ? null : lecturas[0] ?? null,
+    };
+  });
+  res.json({ razones: filas });
+});
+
+/** Todos los agentes instalados, con su estado (para la pantalla "Agentes instalados"). */
+r.get('/agentes', (_req, res) => {
+  const filas = getDb().prepare(
+    `SELECT a.id, a.activo, a.ultimo_contacto, a.version, a.equipo, a.ultimo_error, a.historial,
+            s.nombre AS sucursal, e.rut, e.razon_social, COALESCE(c.id, ci.id) AS cliente_id, COALESCE(c.nombre, ci.nombre) AS cliente
+       FROM agentes a
+       LEFT JOIN sucursales s ON s.id = a.sucursal_id
+       LEFT JOIN empresas e ON e.rut = s.rut_empresa
+       LEFT JOIN clientes c ON c.id = e.cliente_id
+       LEFT JOIN clientes ci ON ci.id = a.cliente_id
+      ORDER BY COALESCE(c.nombre, ci.nombre), s.nombre`
+  ).all();
+  res.json(filas.map((a) => ({
+    id: a.id, activo: !!a.activo, ultimoContacto: a.ultimo_contacto, version: a.version, equipo: a.equipo, error: a.ultimo_error,
+    historial: a.historial, sucursal: a.sucursal, rut: a.rut, razonSocial: a.razon_social, clienteId: a.cliente_id, cliente: a.cliente,
+    certificado: a.rut ? estadoCertificado(a.rut) : null,
+  })));
+});
+
+// ---------- Consulta al SII a pedido (con el certificado del cliente, a través de su agente) ----------
+const consultasEnCurso = new Map(); // rut -> { inicio, periodo, lineas: [], fin, error }
+
+r.post('/empresas/:rut/consultar-sii', (req, res) => {
+  const { rut } = req.params;
+  const periodo = /^\d{4}-\d{2}$/.test(req.body?.periodo ?? '') ? req.body.periodo : null;
+  const emp = getDb().prepare('SELECT rut, razon_social FROM empresas WHERE rut = ?').get(rut);
+  if (!emp || !periodo) return error(res, 400, 'Razón social o periodo no válidos');
+  if (!agenteDisponible(rut)) {
+    return error(res, 409, `El agente de esta razón social no está disponible para consultar al SII (certificado: ${estadoCertificado(rut) ?? 'sin información'})`);
+  }
+  const actual = consultasEnCurso.get(rut);
+  if (actual && !actual.fin) return error(res, 409, 'Ya hay una consulta en curso para esta razón social');
+  const estado = { inicio: new Date().toISOString(), periodo, lineas: [], fin: null, error: null };
+  consultasEnCurso.set(rut, estado);
+  sincronizarEmpresa({ rut, razonSocial: emp.razon_social }, periodo, clienteRemoto(), (m) => estado.lineas.push(m))
+    .catch((e) => { estado.error = e.message; })
+    .finally(() => { estado.fin = new Date().toISOString(); });
+  res.status(202).json({ ok: true });
+});
+
+r.get('/empresas/:rut/consultar-sii', (req, res) => {
+  res.json({ certificado: estadoCertificado(req.params.rut), disponible: agenteDisponible(req.params.rut), consulta: consultasEnCurso.get(req.params.rut) ?? null });
+});
+
 const id = (v) => (/^\d+$/.test(String(v)) ? Number(v) : null);
 const error = (res, status, msg) => res.status(status).json({ error: msg });
+
+// ---------- Agente Sisgen de cada sucursal ----------
+const sucursal = (sid) => getDb().prepare('SELECT id, nombre, rut_empresa FROM sucursales WHERE id = ?').get(sid) ?? null;
+
+/** Genera (o reemplaza) la llave del agente de la sucursal. Se muestra una sola vez. */
+r.post('/sucursales/:id/agente', (req, res) => {
+  const s = sucursal(id(req.params.id));
+  if (!s) return error(res, 404, 'Sucursal no encontrada');
+  res.status(201).json({ sucursal: s.nombre, rut: s.rut_empresa, llave: generarLlaveAgente(s.id) });
+});
+
+/**
+ * Llave de instalación de un cliente: sirve para instalar el agente en un servidor nuevo; al conectarse,
+ * el agente crea su razón social y sucursal (según su empres.dbf) dentro de este cliente.
+ */
+r.post('/clientes/:id/llave-instalacion', (req, res) => {
+  const c = buscarCliente(id(req.params.id));
+  if (!c) return error(res, 404, 'Cliente no encontrado');
+  res.status(201).json({ sucursal: `nueva sucursal de ${c.nombre}`, llave: generarLlaveInstalacion(c.id) });
+});
+
+r.patch('/sucursales/:id/agente', (req, res) => {
+  const s = sucursal(id(req.params.id));
+  if (!s || typeof req.body?.activo !== 'boolean') return error(res, 400, 'Datos no válidos');
+  if (!activarAgente(s.id, req.body.activo)) return error(res, 404, 'La sucursal aún no tiene agente');
+  res.json({ ok: true });
+});
 
 /** Todo lo que necesita el panel en una sola llamada. */
 r.get('/datos', (_req, res) => {

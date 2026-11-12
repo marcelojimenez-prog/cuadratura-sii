@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, pesos, numero, nombrePeriodo, haceCuanto, ESTADO_CLIENTE, formatoRut } from '../util.js';
+import SelectorMes from './SelectorMes.jsx';
 
 /** Pantalla propia de un cliente: sus razones sociales, sucursales, usuarios y estado del mes. */
 export default function FichaCliente({ clienteId, abrir, volver, irAAdmin }) {
@@ -7,6 +8,25 @@ export default function FichaCliente({ clienteId, abrir, volver, irAAdmin }) {
   const [datos, setDatos] = useState(null);
   const [error, setError] = useState(null);
   const [cargando, setCargando] = useState(true);
+  const [llave, setLlave] = useState(null); // { sucursal, llave } se muestra una sola vez
+  const [recargar, setRecargar] = useState(0);
+
+  const generarLlave = async (s) => {
+    const reemplaza = s.agente ? ' La llave anterior dejará de funcionar y habrá que actualizarla en el agente.' : '';
+    if (!window.confirm(`¿Generar la llave del agente para ${s.nombre}?${reemplaza}`)) return;
+    try {
+      const r = await api(`/api/admin/sucursales/${s.id}/agente`, { metodo: 'POST' });
+      setLlave(r);
+      setRecargar((n) => n + 1);
+    } catch (e) { setError(e.message); }
+  };
+
+  const llaveInstalacion = async () => {
+    if (!window.confirm(`¿Generar una llave de instalación para ${datos.cliente.nombre}? Sirve para instalar el agente en un servidor nuevo: al conectarse, la razón social y la sucursal se crean solas.`)) return;
+    try {
+      setLlave(await api(`/api/admin/clientes/${clienteId}/llave-instalacion`, { metodo: 'POST' }));
+    } catch (e) { setError(e.message); }
+  };
 
   useEffect(() => {
     setCargando(true);
@@ -14,12 +34,11 @@ export default function FichaCliente({ clienteId, abrir, volver, irAAdmin }) {
       .then((d) => { setDatos(d); setError(null); })
       .catch((e) => setError(e.message))
       .finally(() => setCargando(false));
-  }, [clienteId, periodo]);
+  }, [clienteId, periodo, recargar]);
 
   const r = datos?.resumen;
   return (
     <>
-      <button type="button" className="btn btn-link px-0 mb-2" onClick={volver}>← Volver a clientes</button>
       {error && <div className="alert alert-danger">{error}</div>}
       {cargando && !datos && <div className="text-secondary">Cargando…</div>}
       {datos && (
@@ -36,11 +55,24 @@ export default function FichaCliente({ clienteId, abrir, volver, irAAdmin }) {
                 {' · '}cliente desde {datos.cliente.creadoEn?.slice(0, 10).split('-').reverse().join('-')}
               </div>
             </div>
-            <select className="form-select form-select-sm w-auto" aria-label="Periodo" value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
-              <option value="">Último mes disponible</option>
-              {datos.periodos.map((p) => <option key={p} value={p}>{nombrePeriodo(p)}</option>)}
-            </select>
+            <SelectorMes valor={periodo} periodos={datos.periodos} alCambiar={setPeriodo} permitirUltimo />
           </div>
+
+          {llave && (
+            <div className="alert alert-success" role="status">
+              <div className="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <strong>Llave del agente de {llave.sucursal}</strong>
+                  <div className="small">Cópiala ahora en el archivo <code>agente.ini</code> del servicio. Por seguridad no se vuelve a mostrar.</div>
+                </div>
+                <button type="button" className="btn-close" aria-label="Cerrar" onClick={() => setLlave(null)} />
+              </div>
+              <div className="input-group input-group-sm mt-2">
+                <input className="form-control font-monospace" readOnly value={llave.llave} aria-label="Llave del agente" onFocus={(e) => e.target.select()} />
+                <button type="button" className="btn btn-outline-dark" onClick={() => navigator.clipboard?.writeText(llave.llave)}>Copiar</button>
+              </div>
+            </div>
+          )}
 
           <div className="row g-3 mb-4">
             <Kpi etiqueta="Total vendido" valor={pesos(r.montoTotal)} />
@@ -55,14 +87,20 @@ export default function FichaCliente({ clienteId, abrir, volver, irAAdmin }) {
 
           <div className="row g-4">
             <div className="col-lg-8">
-              <h2 className="h6 text-uppercase text-secondary mb-2">Razones sociales y sucursales</h2>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <h2 className="h6 text-uppercase text-secondary mb-0">Razones sociales y sucursales</h2>
+                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={llaveInstalacion}>
+                  Instalar agente en un servidor nuevo
+                </button>
+              </div>
               {datos.razones.length === 0 && (
                 <div className="alert alert-info">
-                  Este cliente aún no tiene razones sociales.{' '}
-                  <button type="button" className="btn btn-link p-0 align-baseline" onClick={() => irAAdmin('empresas')}>Asignar una</button>
+                  Este cliente aún no tiene razones sociales. Instala el agente en su servidor con una
+                  <strong> llave de instalación</strong> (botón de arriba) y aparecerán solas, o{' '}
+                  <button type="button" className="btn btn-link p-0 align-baseline" onClick={() => irAAdmin('empresas')}>asigna una existente</button>.
                 </div>
               )}
-              {datos.razones.map((e) => <RazonSocial key={e.rut} e={e} abrir={abrir} />)}
+              {datos.razones.map((e) => <RazonSocial key={e.rut} e={e} abrir={abrir} generarLlave={generarLlave} />)}
             </div>
             <div className="col-lg-4">
               <h2 className="h6 text-uppercase text-secondary mb-2">Usuarios del cliente</h2>
@@ -108,7 +146,7 @@ function Kpi({ etiqueta, valor, sub, color }) {
   );
 }
 
-function RazonSocial({ e, abrir }) {
+function RazonSocial({ e, abrir, generarLlave }) {
   const est = ESTADO_CLIENTE[e.estado];
   return (
     <div className="card tarjeta mb-3">
@@ -123,6 +161,7 @@ function RazonSocial({ e, abrir }) {
               {e.estado === 'urgente' ? `${e.urgentes} ${e.urgentes === 1 ? 'alerta urgente' : 'alertas urgentes'}`
                 : e.estado === 'revisar' ? `${e.alertas} por revisar` : est.texto}
             </span>
+            {e.sucursales.some((s) => s.agente?.activo) && <ConsultarSii rut={e.rut} periodo={e.periodo} />}
             <button type="button" className="btn btn-sm btn-primary boton-marca" disabled={e.sinDatos} onClick={() => abrir(e.rut, e.periodo)}>
               Ver cuadratura
             </button>
@@ -142,12 +181,60 @@ function RazonSocial({ e, abrir }) {
               <span className={`punto-estado ${s.desactualizada ? 'punto-alerta' : 'punto-ok'}`} aria-hidden="true" />
               {s.nombre}
             </span>
-            <span className={s.desactualizada ? 'text-warning-emphasis' : 'text-secondary'}>
-              Leída {haceCuanto(s.ultimaLectura)}{s.ultimoPeriodo && ` · último mes ${nombrePeriodo(s.ultimoPeriodo).toLowerCase()}`}
+            <span className="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+              <span className={s.desactualizada ? 'text-warning-emphasis' : 'text-secondary'}>
+                Leída {haceCuanto(s.ultimaLectura)}{s.ultimoPeriodo && ` · último mes ${nombrePeriodo(s.ultimoPeriodo).toLowerCase()}`}
+              </span>
+              <EstadoAgente agente={s.agente} />
+              {s.agente?.historial && s.agente.historial !== 'pendiente' && (
+                <span className="text-secondary" title="Carga de XML antiguos desde la carpeta de Sisgen">
+                  {s.agente.historial === 'terminado' ? 'Historial completo' : `Historial: ${s.agente.historial}`}
+                </span>
+              )}
+              <button type="button" className="btn btn-link btn-sm p-0" onClick={() => generarLlave(s)}>
+                {s.agente ? 'Nueva llave' : 'Conectar agente'}
+              </button>
             </span>
           </li>
         ))}
       </ul>
     </div>
   );
+}
+
+/** Consulta al SII ahora, con el certificado del cliente a través de su agente. */
+function ConsultarSii({ rut, periodo }) {
+  const [estado, setEstado] = useState(null); // null | 'consultando' | texto final
+  const consultar = async () => {
+    if (!periodo) return;
+    setEstado('consultando');
+    try {
+      await api(`/api/admin/empresas/${encodeURIComponent(rut)}/consultar-sii`, { metodo: 'POST', cuerpo: { periodo } });
+      for (let i = 0; i < 120; i++) {
+        await new Promise((ok) => setTimeout(ok, 3000));
+        const r = await api(`/api/admin/empresas/${encodeURIComponent(rut)}/consultar-sii`);
+        if (r.consulta?.fin) { setEstado(r.consulta.error ? `Error: ${r.consulta.error}` : 'SII consultado ✓'); return; }
+      }
+      setEstado('La consulta sigue en curso');
+    } catch (e) { setEstado(e.message); }
+  };
+  if (estado && estado !== 'consultando') return <span className="small text-secondary" title={estado}>{estado.length > 40 ? `${estado.slice(0, 40)}…` : estado}</span>;
+  return (
+    <button type="button" className="btn btn-sm btn-outline-secondary" disabled={estado === 'consultando' || !periodo} onClick={consultar}
+      title="Consulta el Registro de Ventas y las boletas en el SII con el certificado del cliente (a través de su agente)">
+      {estado === 'consultando' ? 'Consultando SII…' : 'Consultar SII ahora'}
+    </button>
+  );
+}
+
+/** Estado del Agente Sisgen (servicio de Windows) de una sucursal. */
+function EstadoAgente({ agente }) {
+  if (!agente) return <span className="badge text-bg-light border">Sin agente</span>;
+  if (!agente.activo) return <span className="badge text-bg-secondary">Agente desactivado</span>;
+  if (!agente.ultimoContacto) return <span className="badge text-bg-warning">Agente sin conectar</span>;
+  const min = (Date.now() - Date.parse(agente.ultimoContacto.replace(' ', 'T') + 'Z')) / 60000;
+  const titulo = [agente.equipo, agente.version && `v${agente.version}`, agente.error].filter(Boolean).join(' · ');
+  return min <= 5
+    ? <span className="badge text-bg-success" title={titulo}>Agente en línea</span>
+    : <span className="badge text-bg-danger" title={titulo}>Agente sin conexión {haceCuanto(agente.ultimoContacto)}</span>;
 }

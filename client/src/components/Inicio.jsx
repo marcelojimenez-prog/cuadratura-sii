@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, pesos, numero, nombrePeriodo } from '../util.js';
+import SelectorMes from './SelectorMes.jsx';
 
 /** Pantalla de inicio: todas las razones sociales del cliente (o de todos, para Sisgen). */
 export default function Inicio({ usuario, abrir }) {
@@ -39,11 +40,7 @@ export default function Inicio({ usuario, abrir }) {
             {' · '}{periodo ? nombrePeriodo(periodo) : 'último mes con datos de cada una'}
           </div>
         </div>
-        <select className="form-select form-select-sm w-auto" aria-label="Periodo" value={periodo}
-          onChange={(e) => setPeriodo(e.target.value)}>
-          <option value="">Último mes disponible</option>
-          {datos?.periodos.map((p) => <option key={p} value={p}>{nombrePeriodo(p)}</option>)}
-        </select>
+        <SelectorMes valor={periodo} periodos={datos?.periodos} alCambiar={setPeriodo} permitirUltimo />
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}
@@ -91,8 +88,8 @@ function Kpi({ etiqueta, valor, sub, color }) {
 function TarjetaEmpresa({ e, abrir }) {
   const pct = e.documentos ? Math.floor((e.ok / e.documentos) * 1000) / 10 : 0;
   const estado = e.sinDatos ? { txt: 'Sin datos del periodo', color: 'secondary' }
+    : !e.siiConsultadoEn && !e.esDemo ? { txt: 'Sin consultar al SII', color: 'secondary' }
     : e.urgentes ? { txt: `${e.urgentes} ${e.urgentes === 1 ? 'alerta urgente' : 'alertas urgentes'}`, color: 'danger' }
-    : !e.siiConsultadoEn ? { txt: 'Sin consultar al SII', color: 'secondary' }
     : e.alertas ? { txt: `${e.alertas} por revisar`, color: 'warning' }
     : { txt: 'Todo cuadra', color: 'success' };
   return (

@@ -50,13 +50,17 @@ async function llamarUnaVez(token, metodo, data) {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw Object.assign(new ErrorRcv(metodo, `HTTP ${res.status}`), { transitorio: res.status >= 500 });
-  const json = await res.json();
-  const est = json.respEstado;
+  return revisarRcv(metodo, await res.json());
+}
+
+/** Lanza error si la respuesta del RCV trae un código de error. */
+export function revisarRcv(metodo, json) {
+  const est = json?.respEstado;
   if (est && est.codRespuesta !== 0) throw new ErrorRcv(metodo, `${est.codRespuesta} ${est.msgeRespuesta ?? est.codError ?? ''}`.trim());
   return json;
 }
 
-const base = (rut, periodo) => {
+export const base = (rut, periodo) => {
   const [num, dv] = rut.split('-');
   return { rutEmisor: num, dvEmisor: dv.toUpperCase(), ptributario: periodo.replace('-', ''), estadoContab: 'REGISTRO', operacion: 'VENTA', busquedaInicial: true };
 };
@@ -66,7 +70,10 @@ const base = (rut, periodo) => {
  * @returns {Promise<Array<{ tipoSii, nombre, tipoIngreso:'RESUMEN'|'DET_ELE'|string, totDoc, montoNeto, montoExento, montoIva, montoTotal }>>}
  */
 export async function rcvResumenVentas(token, rut, periodo) {
-  const json = await llamar(token, 'getResumen', base(rut, periodo));
+  return mapearResumen(await llamar(token, 'getResumen', base(rut, periodo)));
+}
+
+export function mapearResumen(json) {
   return (json.data ?? []).map((r) => ({
     tipoSii: r.rsmnTipoDocInteger,
     nombre: (r.dcvNombreTipoDoc ?? '').trim(),
@@ -86,7 +93,10 @@ const fechaIso = (f) => (f && /^\d{2}\/\d{2}\/\d{4}/.test(f) ? `${f.slice(6, 10)
  * @returns {Promise<Array>} filas listas para docs_sii
  */
 export async function rcvDetalleVentas(token, rut, periodo, tipoSii) {
-  const json = await llamar(token, 'getDetalleVenta', { ...base(rut, periodo), codTipoDoc: Number(tipoSii) });
+  return mapearDetalle(await llamar(token, 'getDetalleVenta', { ...base(rut, periodo), codTipoDoc: Number(tipoSii) }), rut, periodo);
+}
+
+export function mapearDetalle(json, rut, periodo) {
   return (json.data ?? []).map((d) => ({
     rutEmisor: rut,
     periodo,

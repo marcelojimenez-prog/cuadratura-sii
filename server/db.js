@@ -2,6 +2,7 @@
 // Piloto: SQLite (node:sqlite, incluido en Node >= 22.5). Todo el acceso pasa por este
 // módulo para poder migrar a PostgreSQL sin tocar el resto del sistema.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -171,13 +172,76 @@ CREATE TABLE IF NOT EXISTS sii_folios_externos (
   consultado_en  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   PRIMARY KEY (rut_emisor, periodo, tipo_sii, desde)
 );
+
+-- ===== Agente Sisgen (servicio de Windows en cada sucursal) =====
+-- Cada sucursal tiene a lo más un agente; solo se guarda el hash de su llave.
+-- Llave de instalación: se genera para un cliente (sucursal_id NULL); al conectarse por primera vez
+-- el agente informa su razón social y sucursal (empres.dbf) y queda asociado a ella.
+CREATE TABLE IF NOT EXISTS agentes (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  sucursal_id      INTEGER UNIQUE REFERENCES sucursales(id),
+  cliente_id       INTEGER REFERENCES clientes(id),
+  llave_hash       TEXT NOT NULL UNIQUE,
+  activo           INTEGER NOT NULL DEFAULT 1,
+  creado_en        TEXT NOT NULL DEFAULT (datetime('now')),
+  ultimo_contacto  TEXT,                    -- UTC
+  version          TEXT,
+  equipo           TEXT,
+  ip               TEXT,
+  ultimo_error     TEXT
+);
+
+-- Envío de cada documento al SII según DTESERVICE (tablas trazadte / trazabol de la sucursal)
+CREATE TABLE IF NOT EXISTS envios_sii (
+  rut_emisor     TEXT NOT NULL,
+  tipo_sii       INTEGER NOT NULL,
+  folio          INTEGER NOT NULL,
+  sucursal_id    INTEGER REFERENCES sucursales(id),
+  fecha          TEXT,
+  emitido_en     TEXT,                      -- como lo anota DTESERVICE (dd-mm-aaaa hh:mm:ss)
+  enviado_en     TEXT,
+  track_id       TEXT,
+  estado_envio   TEXT,
+  estado_sii     TEXT,                      -- DOK, EPR, RCH, …
+  detalle_sii    TEXT,
+  actualizado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (rut_emisor, tipo_sii, folio)
+);
+
+-- Archivo de XML de documentos subidos por el agente (en línea e historial desde 2001): permite
+-- descargar XML/PDF de cualquier documento sin acceso a la sucursal. El XML va comprimido en disco
+-- (carpeta xml junto a la base); aquí quedan los datos para buscarlo.
+CREATE TABLE IF NOT EXISTS xml_documentos (
+  rut_emisor      TEXT NOT NULL,
+  tipo_sii        INTEGER NOT NULL,
+  folio           INTEGER NOT NULL,
+  sucursal_id     INTEGER REFERENCES sucursales(id),
+  fecha           TEXT,
+  rut_receptor    TEXT,
+  nombre_receptor TEXT,
+  total           REAL,
+  archivo         TEXT,                     -- nombre original en la sucursal
+  ruta            TEXT NOT NULL,            -- relativa a la carpeta xml del portal
+  recibido_en     TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (rut_emisor, tipo_sii, folio)
+);
 `;
 
 let db;
+let carpetaXmlActual = null;
+
+/** Carpeta donde se guardan los XML comprimidos (junto a la base de datos). */
+export function carpetaXml() {
+  if (!carpetaXmlActual) throw new Error('Base de datos no inicializada');
+  return carpetaXmlActual;
+}
 
 export function abrirDb(rutaArchivo) {
   if (db) return db;
-  fs.mkdirSync(path.dirname(rutaArchivo), { recursive: true });
+  carpetaXmlActual = rutaArchivo === ':memory:'
+    ? fs.mkdtempSync(path.join(os.tmpdir(), 'cuadratura-xml-'))
+    : path.join(path.dirname(path.resolve(rutaArchivo)), 'xml');
+  if (rutaArchivo !== ':memory:') fs.mkdirSync(path.dirname(rutaArchivo), { recursive: true });
   db = new DatabaseSync(rutaArchivo);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;');
   db.exec(ESQUEMA);
@@ -194,7 +258,49 @@ function migrar(d) {
   if (!colsSuc.includes('ruta_procesos')) d.exec('ALTER TABLE sucursales ADD COLUMN ruta_procesos TEXT');
   const colsEmp = d.prepare('PRAGMA table_info(empresas)').all().map((c) => c.name);
   if (!colsEmp.includes('cliente_id')) d.exec('ALTER TABLE empresas ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)');
+  // origen: F1 (importación de tablas Sisgen) | AGENTE (llegó en línea desde la sucursal)
+  if (!cols.includes('origen')) d.exec("ALTER TABLE docs_sisgen ADD COLUMN origen TEXT NOT NULL DEFAULT 'F1'");
+  // agentes: primera versión exigía sucursal_id; ahora admite llave de instalación por cliente
+  const colsAg = d.prepare('PRAGMA table_info(agentes)').all().map((c) => c.name);
+  if (!colsAg.includes('cliente_id')) {
+    d.exec(`BEGIN;
+      ALTER TABLE agentes RENAME TO agentes_v1;
+      ${ESQUEMA.match(/CREATE TABLE IF NOT EXISTS agentes \([\s\S]*?\n\);/)[0]}
+      INSERT INTO agentes (id, sucursal_id, llave_hash, activo, creado_en, ultimo_contacto, version, equipo, ip, ultimo_error)
+        SELECT id, sucursal_id, llave_hash, activo, creado_en, ultimo_contacto, version, equipo, ip, ultimo_error FROM agentes_v1;
+      DROP TABLE agentes_v1;
+      COMMIT;`);
+  }
+  if (!colsAg.includes('historial')) d.exec('ALTER TABLE agentes ADD COLUMN historial TEXT');
+  // Fecha de autorización del CAF (<FA>): facturas y notas vencen a los 180 días
+  const colsCaf = d.prepare('PRAGMA table_info(caf_rangos)').all().map((c) => c.name);
+  if (!colsCaf.includes('fecha_autorizacion')) d.exec('ALTER TABLE caf_rangos ADD COLUMN fecha_autorizacion TEXT');
+  // Datos impresos en los documentos (vienen de empres.dbf vía agente)
+  const colsEmp2 = d.prepare('PRAGMA table_info(empresas)').all().map((c) => c.name);
+  for (const c of ['oficina_sii', 'resolucion_numero', 'resolucion_fecha']) {
+    if (!colsEmp2.includes(c)) d.exec(`ALTER TABLE empresas ADD COLUMN ${c} TEXT`);
+  }
+  // xml_documentos v1 guardaba el XML dentro de la base: se pasa a archivos en disco
+  const colsXml = d.prepare('PRAGMA table_info(xml_documentos)').all().map((c) => c.name);
+  if (colsXml.includes('xml_gz')) {
+    const viejos = d.prepare('SELECT * FROM xml_documentos').all();
+    d.exec('ALTER TABLE xml_documentos RENAME TO xml_documentos_v1;');
+    d.exec(ESQUEMA.match(/CREATE TABLE IF NOT EXISTS xml_documentos \([\s\S]*?\n\);/)[0]);
+    const ins = d.prepare(`INSERT INTO xml_documentos (rut_emisor, tipo_sii, folio, sucursal_id, archivo, ruta, recibido_en)
+                           VALUES (?,?,?,?,?,?,?)`);
+    for (const v of viejos) {
+      const rel = rutaRelativaXml(v.rut_emisor, v.tipo_sii, v.folio);
+      fs.mkdirSync(path.dirname(path.join(carpetaXml(), rel)), { recursive: true });
+      fs.writeFileSync(path.join(carpetaXml(), rel), v.xml_gz);
+      ins.run(v.rut_emisor, v.tipo_sii, v.folio, v.sucursal_id, v.archivo, rel, v.recibido_en);
+    }
+    d.exec('DROP TABLE xml_documentos_v1');
+  }
+  d.exec('CREATE INDEX IF NOT EXISTS ix_xml_fecha ON xml_documentos (rut_emisor, fecha);');
 }
+
+/** Ruta (relativa a la carpeta xml) donde se guarda el XML comprimido de un documento. */
+export const rutaRelativaXml = (rut, tipo, folio) => path.join(rut, String(tipo), `${folio}.xml.gz`);
 
 export function getDb() {
   if (!db) throw new Error('Base de datos no inicializada');
@@ -229,6 +335,7 @@ export function listarEmpresas(soloRuts = null) {
   const periodos = d.prepare(
     'SELECT DISTINCT periodo FROM docs_sisgen WHERE rut_emisor = ? UNION SELECT DISTINCT periodo FROM docs_sii WHERE rut_emisor = ? ORDER BY periodo DESC'
   );
+  const ultimoSisgen = d.prepare('SELECT MAX(periodo) AS p FROM docs_sisgen WHERE rut_emisor = ?');
   return empresas.map((e) => ({
     rut: e.rut,
     razonSocial: e.razon_social,
@@ -237,6 +344,8 @@ export function listarEmpresas(soloRuts = null) {
     cliente: e.cliente ?? null,
     sucursales: sucs.all(e.rut),
     periodos: periodos.all(e.rut, e.rut).map((p) => p.periodo),
+    // Último mes con ventas cargadas desde Sisgen (el "último mes disponible" por defecto)
+    ultimoPeriodoSisgen: ultimoSisgen.get(e.rut)?.p ?? null,
   }));
 }
 
@@ -285,14 +394,23 @@ export function guardarSucursal({ rutEmpresa, codigo, nombre, rutaDatos = null, 
   return d.prepare('SELECT id FROM sucursales WHERE rut_empresa = ? AND codigo = ?').get(rutEmpresa, codigo).id;
 }
 
-/** Reemplaza los documentos Sisgen de una sucursal/periodo (reimportación idempotente). */
+/**
+ * Reemplaza los documentos Sisgen de una sucursal/periodo (reimportación idempotente).
+ * Los que llegaron en línea desde el agente (origen AGENTE) se conservan si la importación no los
+ * trae (p. ej. emitidos después de leer F1); si los trae, pasan a tener los datos de F1.
+ */
 export function reemplazarDocsSisgen(sucursalId, periodo, docs) {
   return transaccion((d) => {
-    d.prepare('DELETE FROM docs_sisgen WHERE sucursal_id = ? AND periodo = ?').run(sucursalId, periodo);
+    d.prepare("DELETE FROM docs_sisgen WHERE sucursal_id = ? AND periodo = ? AND origen = 'F1'").run(sucursalId, periodo);
     const ins = d.prepare(
       `INSERT INTO docs_sisgen (rut_emisor, sucursal_id, periodo, tipo_sisgen, tipo_sii, folio, fecha,
          rut_receptor, nombre_receptor, neto, exento, iva, total, en_blanco, sin_xml)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(sucursal_id, periodo, tipo_sisgen, folio) DO UPDATE SET
+         rut_emisor = excluded.rut_emisor, tipo_sii = excluded.tipo_sii, fecha = excluded.fecha,
+         rut_receptor = excluded.rut_receptor, nombre_receptor = excluded.nombre_receptor, neto = excluded.neto,
+         exento = excluded.exento, iva = excluded.iva, total = excluded.total, en_blanco = excluded.en_blanco,
+         sin_xml = excluded.sin_xml, origen = 'F1', importado_en = datetime('now')`
     );
     for (const x of docs) {
       ins.run(x.rutEmisor, sucursalId, periodo, x.tipoSisgen, x.tipoSii, x.folio, x.fecha ?? null,
@@ -369,7 +487,8 @@ export function huellaDatos(rut, periodo) {
   const b = d.prepare('SELECT COUNT(*) AS n, MAX(consultado_en) AS m FROM docs_sii WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
   const c = sincronizacionSii(rut, periodo);
   const f = d.prepare('SELECT COUNT(*) AS n, MAX(consultado_en) AS m FROM sii_folios_externos WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
-  return [a.n, a.m, b.n, b.m, c?.consultado_en, f.n, f.m].join('|');
+  const g = d.prepare("SELECT COUNT(*) AS n, MAX(actualizado_en) AS m FROM envios_sii WHERE rut_emisor = ? AND fecha LIKE ? || '%'").get(rut, periodo);
+  return [a.n, a.m, b.n, b.m, c?.consultado_en, f.n, f.m, g.n, g.m].join('|');
 }
 
 export function resumenSii(rut, periodo) {
@@ -400,15 +519,44 @@ export function xmlOtrosMeses(rut, periodo) {
   return new Map(filas.map((f) => [`${f.tipo_sii}-${f.folio}`, f.fecha]));
 }
 
+/** Envíos al SII (Track ID y respuesta según DTESERVICE) de los documentos de un periodo. */
+export function enviosSii(rut, periodo) {
+  const filas = getDb()
+    .prepare("SELECT tipo_sii, folio, track_id, estado_envio, estado_sii, detalle_sii FROM envios_sii WHERE rut_emisor = ? AND fecha LIKE ? || '%'")
+    .all(rut, periodo);
+  return new Map(filas.map((f) => [`${f.tipo_sii}-${f.folio}`, f]));
+}
+
+/**
+ * Documentos (tipo-folio) registrados en Sisgen (F1, no en blanco) en OTRO mes que el indicado.
+ * Sirve para no contar como "en blanco" un XML regenerado después para un documento de otro mes.
+ */
+export function registradosEnOtroMes(rut, periodo, claves) {
+  if (!claves.length) return new Map();
+  const st = getDb().prepare(
+    `SELECT periodo FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ? AND periodo <> ? AND en_blanco = 0 LIMIT 1`
+  );
+  const r = new Map();
+  for (const k of claves) {
+    const [tipo, folio] = k.split('-').map(Number);
+    const f = st.get(rut, tipo, folio, periodo);
+    if (f) r.set(k, f.periodo);
+  }
+  return r;
+}
+
 /** Reemplaza los rangos CAF de una sucursal. */
 export function reemplazarRangosCaf(sucursalId, rutEmpresa, rangos) {
   return transaccion((d) => {
     d.prepare('DELETE FROM caf_rangos WHERE sucursal_id = ?').run(sucursalId);
     const ins = d.prepare(
-      `INSERT OR IGNORE INTO caf_rangos (sucursal_id, rut_empresa, tipo_sii, desde, hasta, archivo)
-       VALUES (?,?,?,?,?,?)`
+      `INSERT OR IGNORE INTO caf_rangos (sucursal_id, rut_empresa, tipo_sii, desde, hasta, archivo, fecha_autorizacion)
+       VALUES (?,?,?,?,?,?,?)`
     );
-    for (const r of rangos) ins.run(sucursalId, rutEmpresa, r.tipoSii, r.desde, r.hasta, r.archivo ?? null);
+    for (const r of rangos) {
+      const fa = /^\d{4}-\d{2}-\d{2}$/.test(r.fechaAutorizacion ?? '') ? r.fechaAutorizacion : null;
+      ins.run(sucursalId, rutEmpresa, r.tipoSii, r.desde, r.hasta, r.archivo ?? null, fa);
+    }
     return rangos.length;
   });
 }
@@ -416,11 +564,18 @@ export function reemplazarRangosCaf(sucursalId, rutEmpresa, rangos) {
 export function rangosCaf(rut) {
   return getDb()
     .prepare(
-      `SELECT c.tipo_sii, c.desde, c.hasta, s.nombre AS sucursal
+      `SELECT c.tipo_sii, c.desde, c.hasta, c.fecha_autorizacion, s.nombre AS sucursal
          FROM caf_rangos c JOIN sucursales s ON s.id = c.sucursal_id
         WHERE c.rut_empresa = ?`
     )
     .all(rut);
+}
+
+/** Folio más alto emitido (en cualquier mes) dentro de un rango, o null si no se ha usado. */
+export function ultimoFolioUsado(rut, tipoSii, desde, hasta) {
+  return getDb()
+    .prepare('SELECT MAX(folio) AS f FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio BETWEEN ? AND ?')
+    .get(rut, tipoSii, desde, hasta)?.f ?? null;
 }
 
 /** Cantidad de documentos Sisgen por tipo SII en un periodo. */

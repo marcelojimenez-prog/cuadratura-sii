@@ -5,6 +5,8 @@ import { cargarConfig, RAIZ } from './config.js';
 import { abrirDb, hayDatos } from './db.js';
 import { cargarDemo } from './lib/demo.js';
 import apiRouter from './routes/api.js';
+import agenteRouter from './routes/agente.js';
+import { iniciarProgramador } from './programador.js';
 import { hayUsuarios } from './usuarios.js';
 
 const cfg = cargarConfig();
@@ -21,6 +23,9 @@ if (!hayUsuarios()) {
 
 const app = express();
 app.disable('x-powered-by');
+// El agente de cada sucursal envía lotes de XML: tiene su propio límite y su propia autenticación
+// (el agente envía comprimido con gzip; el límite se aplica al contenido ya descomprimido)
+app.use('/api/agente', express.json({ limit: '60mb' }), agenteRouter);
 app.use(express.json({ limit: '100kb' }));
 // Cabeceras básicas de seguridad
 app.use((_req, res, next) => {
@@ -44,5 +49,6 @@ app.use((err, _req, res, _next) => {
 
 app.listen(cfg.puerto, () => {
   console.log(`Cuadratura SII escuchando en http://localhost:${cfg.puerto}`);
+  if (cfg.tareasAutomaticas !== false && cfg.tieneConfigLocal) iniciarProgramador();
   if (!cfg.tieneConfigLocal) console.log('Sin config/config.local.json: modo demo.');
 });

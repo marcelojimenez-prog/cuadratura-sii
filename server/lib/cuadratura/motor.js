@@ -27,6 +27,23 @@ const clave = (tipo, folio) => `${tipo}-${folio}`;
  *        foliosExternos: bloques de folios recibidos por el SII fuera de los CAF de las sucursales
  *          [{ tipo_sii, desde, ultimo, cantidad, caf_antes, caf_despues }].
  */
+/**
+ * Respuesta del SII a un envío según lo que anota DTESERVICE (trazadte / trazabol):
+ *  DTE:     EPR = envío procesado (con detalle "Aceptado"/"Rechazado"), RPR = con reparos, RCH/RCT/RFR/RCS… = rechazado
+ *  Boletas: DOK = aceptada, FAU/FNA… = no recibida/no autorizada
+ * @returns {'aceptado'|'rechazado'|'pendiente'|null}
+ */
+export function respuestaEnvio(e) {
+  const est = String(e.estado_sii ?? '').trim().toUpperCase();
+  const det = String(e.detalle_sii ?? '').toLowerCase();
+  if (!e.track_id) return null;
+  if (!est) return 'pendiente';
+  if (/rechaz/.test(det)) return 'rechazado';
+  if (est === 'DOK' || est === 'RPR' || est === 'RLV' || (est === 'EPR' && !/rechaz|reparo/.test(det))) return 'aceptado';
+  if (/^R(CH|CT|FR|CS|SC)$/.test(est)) return 'rechazado';
+  return 'pendiente';
+}
+
 export function cuadrar(docsSisgen, docsSii, opciones = {}) {
   const tiposConsultados = opciones.tiposConsultados ?? new Set(docsSii.map((d) => d.tipo_sii));
   const rangosPorTipo = new Map();
@@ -59,7 +76,20 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
     const s = sii.get(k);
     let estado;
     let motivo = null;
-    if (!s) {
+    // Envío al SII según DTESERVICE (Track ID y respuesta), informado por el agente de la sucursal
+    const envio = opciones.envios?.get(k);
+    const resp = envio ? respuestaEnvio(envio) : null;
+    if (!s && resp === 'aceptado') {
+      // Aceptado por el SII; el Registro de Ventas se actualiza con retraso
+      estado = ESTADOS.OK;
+      motivo = `Aceptado por el SII (Track ID ${envio.track_id}); aún no aparece en el Registro de Ventas`;
+    } else if (!s && resp === 'rechazado') {
+      estado = ESTADOS.RECHAZADO;
+      motivo = `Rechazado por el SII (Track ID ${envio.track_id}): ${[envio.estado_sii, envio.detalle_sii].filter(Boolean).join(' ')}`;
+    } else if (!s && resp === 'pendiente') {
+      estado = ESTADOS.SIN_VERIFICAR;
+      motivo = `Enviado al SII (Track ID ${envio.track_id}), esperando respuesta`;
+    } else if (!s) {
       estado = tiposConsultados.has(d.tipo_sii) && !tiposResumen.has(d.tipo_sii)
         ? ESTADOS.FALTA_EN_SII : ESTADOS.SIN_VERIFICAR;
     } else if (s.estado === 'NO_RECIBIDO') {
@@ -72,7 +102,8 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
       estado = ESTADOS.REPARO; motivo = s.motivo;
     } else if (Math.abs((s.total ?? 0) - (d.total ?? 0)) > TOLERANCIA_MONTO) {
       estado = ESTADOS.MONTO_DISTINTO;
-      motivo = `Sisgen ${fmt(d.total)} / SII ${fmt(s.total)}`;
+      motivo = `Sisgen ${fmt(d.total)} / SII ${fmt(s.total)}. Puede deberse a que se modificó un documento ya aceptado ` +
+        'por el SII, o a que se usó el folio de otra sucursal';
     } else {
       estado = ESTADOS.OK;
     }
@@ -87,6 +118,9 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
       rutReceptor: d.rut_receptor,
       nombreReceptor: d.nombre_receptor,
       montoSisgen: d.total,
+      neto: d.neto ?? 0,
+      exento: d.exento ?? 0,
+      iva: d.iva ?? 0,
       montoSii: s?.total ?? null,
       estadoSii: s?.estado ?? null,
       fuenteSii: s?.fuente ?? null,
