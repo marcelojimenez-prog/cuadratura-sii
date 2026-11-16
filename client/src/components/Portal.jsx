@@ -7,6 +7,7 @@ import Admin from './Admin.jsx';
 import TablaClientes from './TablaClientes.jsx';
 import FichaCliente from './FichaCliente.jsx';
 import BuscarDocumentos from './BuscarDocumentos.jsx';
+import Compras from './Compras.jsx';
 import QueRevisar from './QueRevisar.jsx';
 import Agentes from './Agentes.jsx';
 import SelectorMes from './SelectorMes.jsx';
@@ -29,6 +30,7 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
   const [rut, setRut] = useState(inicial.rut ?? '');                     // razón social abierta
   const [periodo, setPeriodo] = useState(inicial.periodo ?? '');
   const [vista, setVista] = useState(inicial.vista ?? 'resumen');        // pestaña dentro de la razón social
+  const [sucursal, setSucursal] = useState(inicial.sucursal ?? '');      // '' = todas las sucursales
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [filtroInicial, setFiltroInicial] = useState(null);
@@ -66,7 +68,16 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
   // Dónde se navegan las razones sociales: equipo Sisgen en "Clientes"; un cliente, en su "Inicio"
   const seccionEmpresas = esAdmin ? 'clientes' : 'inicio';
   const empresa = empresas?.find((e) => e.rut === rut);
-  const nAlertas = datos?.alertas.filter((a) => a.nivel !== 'baja').length ?? 0;
+  // Vista por sucursal: los datos de la razón social filtrados a una sucursal ('' = todas)
+  const nombresSucursal = (a) => (a.sucursal ?? '').split(', ');
+  const datosVista = datos && sucursal
+    ? {
+      ...datos,
+      documentos: datos.documentos.filter((d) => d.sucursal === sucursal),
+      alertas: datos.alertas.filter((a) => nombresSucursal(a).includes(sucursal)),
+    }
+    : datos;
+  const nAlertas = datosVista?.alertas.filter((a) => a.nivel !== 'baja').length ?? 0;
 
   const ir = (s, opciones = {}) => {
     setSeccion(s);
@@ -81,6 +92,7 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
     setSeccion(seccionEmpresas);
     setDatos(null);
     setVista(nuevaVista);
+    if (nuevoRut !== rut) setSucursal('');
     setRut(nuevoRut);
     setPeriodo(nuevoPeriodo && emp?.periodos.includes(nuevoPeriodo) ? nuevoPeriodo : emp?.ultimoPeriodoSisgen || emp?.periodos[0] || '');
   };
@@ -89,7 +101,7 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
 
   // ---------- Historial: el botón Atrás del navegador (y "← Volver") vuelve a la pantalla anterior ----------
   // Cada pantalla del portal queda como una entrada del historial del navegador.
-  const pantalla = { seccion, clienteId, rut, periodo, vista };
+  const pantalla = { seccion, clienteId, rut, periodo, vista, sucursal };
   const [profundidad, setProfundidad] = useState(window.history.state?.nivel ?? 0);
   useEffect(() => {
     // Al volver con Atrás, el historial ya está en esta pantalla: no se agrega una entrada nueva
@@ -100,12 +112,12 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
     if (!actual) window.history.replaceState({ ...estado, nivel: 0 }, '');
     else window.history.pushState(estado, '');
     setProfundidad(actual ? nivel : 0);
-  }, [seccion, clienteId, rut, periodo, vista]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [seccion, clienteId, rut, periodo, vista, sucursal]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const alVolver = (ev) => {
       const p = ev.state?.portal;
       if (!p) return;
-      setSeccion(p.seccion); setClienteId(p.clienteId); setVista(p.vista); setPeriodo(p.periodo);
+      setSeccion(p.seccion); setClienteId(p.clienteId); setVista(p.vista); setPeriodo(p.periodo); setSucursal(p.sucursal ?? '');
       if (p.rut !== rut) setDatos(null);
       setRut(p.rut);
       setProfundidad(ev.state.nivel ?? 0);
@@ -208,13 +220,23 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
               RUT {formatoRut(empresa?.rut)} · {empresa?.sucursales.length} {empresa?.sucursales.length === 1 ? 'sucursal' : 'sucursales'}
             </div>
           </div>
-          {vista !== 'buscar' && <SelectorMes valor={periodo} periodos={empresa?.periodos} alCambiar={setPeriodo} />}
+          <div className="d-flex gap-2 flex-wrap">
+            {empresa?.sucursales.length > 1 && vista !== 'buscar' && (
+              <select className="form-select form-select-sm w-auto selector-sucursal" aria-label="Sucursal" value={sucursal}
+                onChange={(e) => setSucursal(e.target.value)}>
+                <option value="">Todas las sucursales</option>
+                {empresa.sucursales.map((s) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+              </select>
+            )}
+            {vista !== 'buscar' && <SelectorMes valor={periodo} periodos={empresa?.periodos} alCambiar={setPeriodo} />}
+          </div>
         </div>
         <div className="pestanas-empresa mb-3" role="tablist">
           {[
             ['resumen', 'Resumen'],
             ['alertas', <>Qué revisar{nAlertas > 0 && <span className="contador-pestana">{nAlertas}</span>}</>],
             ['documentos', 'Detalle'],
+            ['compras', 'Compras'],
             ['buscar', 'Buscar documento'],
           ].map(([id, txt]) => (
             <button key={id} type="button" role="tab" aria-selected={vista === id} className={`pestana ${vista === id ? 'activa' : ''}`}
@@ -224,11 +246,13 @@ export default function Portal({ usuario, alSalir, alActualizarUsuario }) {
         {error && <div className="alert alert-danger">{error}</div>}
         {cargando && !datos && vista !== 'buscar' && <div className="text-secondary">Cargando…</div>}
         {vista === 'buscar' && <BuscarDocumentos rut={rut} />}
-        {datos && vista !== 'buscar' && (
+        {vista === 'compras' && periodo && <Compras rut={rut} periodo={periodo} sucursal={sucursal} />}
+        {datos && vista !== 'buscar' && vista !== 'compras' && (
           <div style={{ opacity: cargando ? 0.5 : 1 }}>
-            {vista === 'resumen' && <Resumen datos={datos} irAAlertas={() => setVista('alertas')} irADocumentos={irADocumentos} />}
-            {vista === 'alertas' && <Alertas alertas={datos.alertas} irADocumentos={irADocumentos} />}
-            {vista === 'documentos' && <Documentos datos={datos} filtroInicial={filtroInicial} />}
+            {sucursal && <div className="small text-secondary mb-2">Mostrando solo la sucursal <strong>{sucursal}</strong>.</div>}
+            {vista === 'resumen' && <Resumen datos={datosVista} irAAlertas={() => setVista('alertas')} irADocumentos={irADocumentos} />}
+            {vista === 'alertas' && <Alertas alertas={datosVista.alertas} irADocumentos={irADocumentos} rut={datosVista.rut} />}
+            {vista === 'documentos' && <Documentos key={sucursal} datos={datosVista} filtroInicial={filtroInicial} />}
           </div>
         )}
       </>

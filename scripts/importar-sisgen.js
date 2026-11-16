@@ -1,10 +1,13 @@
 // Importa las ventas de un periodo para todas las sucursales configuradas en config.local.json.
-// Uso: npm run importar -- 2025-04 [rutEmpresa] [codigoSucursal]
+// Uso: npm run importar -- 2025-04 [rutEmpresa] [codigoSucursal] [--incluir-agentes]
+// Las sucursales con agente instalado (activo) no se leen por la red: sus datos los envía el agente.
 import { cargarConfig } from '../server/config.js';
-import { abrirDb, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen, reemplazarRangosCaf, reemplazarXmlOtrosMeses } from '../server/db.js';
+import { abrirDb, getDb, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen, reemplazarRangosCaf, reemplazarXmlOtrosMeses, blancosSinRespaldo, guardarRespaldos } from '../server/db.js';
+import { buscarDetalleBlancos } from '../server/lib/sisgen/respaldo.js';
 import { leerEmpresa, leerDocumentosMes, leerCafs, normalizarRut } from '../server/lib/sisgen/importar.js';
 
-const [periodo, soloRut, soloSucursal] = process.argv.slice(2);
+const incluirAgentes = process.argv.includes('--incluir-agentes');
+const [periodo, soloRut, soloSucursal] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 if (!/^\d{4}-\d{2}$/.test(periodo || '')) {
   console.error('Uso: npm run importar -- YYYY-MM [rutEmpresa]');
   process.exit(1);
@@ -16,6 +19,9 @@ if (!cfg.empresas.length) {
   process.exit(1);
 }
 abrirDb(cfg.rutaBaseDatos);
+const conAgente = (rut, codigo) => !!getDb().prepare(
+  `SELECT 1 FROM agentes a JOIN sucursales s ON s.id = a.sucursal_id WHERE a.activo = 1 AND s.rut_empresa = ? AND s.codigo = ?`
+).get(rut, codigo);
 
 for (const emp of cfg.empresas) {
   const rut = normalizarRut(emp.rut);
@@ -25,6 +31,7 @@ for (const emp of cfg.empresas) {
 
   for (const suc of emp.sucursales) {
     if (soloSucursal && suc.codigo !== soloSucursal) continue;
+    if (!incluirAgentes && conAgente(rut, suc.codigo)) { console.log(`  · ${suc.nombre}: tiene agente instalado, no se lee por la red`); continue; }
     const inicio = Date.now();
     try {
       const empSisgen = leerEmpresa(suc.rutaDatos);
@@ -40,6 +47,12 @@ for (const emp of cfg.empresas) {
       const cafs = suc.rutaProcesos ? leerCafs(suc.rutaProcesos) : null;
       if (cafs) reemplazarRangosCaf(id, rut, cafs);
       else leido.avisos.push('Sin carpeta procesos\\Folios: no se puede validar a qué sucursal corresponde cada folio');
+      // Documentos en blanco: lo que llevaban, desde la carpeta backup de Sisgen
+      const pendientes = blancosSinRespaldo(id);
+      if (pendientes.length) {
+        const n = guardarRespaldos(rut, id, buscarDetalleBlancos(suc.rutaDatos, pendientes));
+        console.log(`    Detalle de documentos en blanco (backup / tabla DT): ${n} de ${pendientes.length} encontrados`);
+      }
       const porTipo = docs.reduce((a, d) => ((a[d.tipoSisgen] = (a[d.tipoSisgen] || 0) + 1), a), {});
       const enBlanco = docs.filter((d) => d.enBlanco).length;
       const sinXml = docs.filter((d) => d.sinXml).length;

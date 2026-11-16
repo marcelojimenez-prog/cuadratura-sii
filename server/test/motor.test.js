@@ -177,3 +177,38 @@ test('boleta confirmada "no recibida" por la API queda faltante con el motivo de
   assert.equal(r.documentos.find((d) => d.folio === 1).estado, ESTADOS.OK);
   assert.equal(r.cuadreTipos[0].estado, 'CUADRA_SIN_FALTANTES');
 });
+
+test('documento en blanco: la alerta lleva lo que tenía según la carpeta backup', () => {
+  const respaldo = { encontrado: true, fuente: 'BACKUP', hora: '12:12:13', total: 1100, lineas: [{ descripcion: 'CERV BUDWEISER', cantidad: 1, precio: 1100, total: 1100 }] };
+  const r = cuadrar([{ ...sg(33, 7, 1100), en_blanco: 1, respaldo }], [], { tiposConsultados: new Set([33]) });
+  const a = r.alertas.find((x) => x.folio === 7);
+  assert.equal(a.codigo, 'FALTA_EN_SII');
+  assert.deepEqual(a.respaldo, respaldo);
+  assert.deepEqual(r.documentos.find((d) => d.folio === 7).respaldo, respaldo);
+});
+
+test('documento en blanco sin detalle en el backup ni en la tabla DT: eliminar', () => {
+  const r = cuadrar([{ ...sg(33, 8, 500), en_blanco: 1, respaldo: { encontrado: false } }], [], { tiposConsultados: new Set([33]) });
+  const a = r.alertas.find((x) => x.folio === 8);
+  assert.equal(a.respaldo.encontrado, false);
+  assert.ok(r.alertas.some((x) => x.motivo === 'Detalle no encontrado en ninguna tabla: eliminar') || a.respaldo.encontrado === false);
+});
+
+test('documento completo sin XML que no llegó al SII: republicar, con lo que llevaba', () => {
+  const respaldo = { encontrado: true, fuente: 'DT', lineas: [{ codigo: '6655', descripcion: 'CERV BUDWEISER', cantidad: 2 }] };
+  const r = cuadrar([bol(1, 100), bol(2, 200), bol(3, 1100, { sin_xml: 1, respaldo })], [],
+    { resumenSii: [res(39, 2, 300)], tiposConsultados: new Set([39]) });
+  const a = r.alertas.filter((x) => x.folio === 3);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].codigo, 'FALTA_EN_SII');
+  assert.equal(a[0].republicar, true);
+  assert.deepEqual(a[0].respaldo, respaldo);
+  assert.match(a[0].motivo, /republicar\. Llevaba: 2 × CERV BUDWEISER/);
+});
+
+test('no se pide republicar si el folio también está en otra sucursal o el documento está en blanco', () => {
+  const dup = cuadrar([{ ...sg(33, 9, 500), sin_xml: 1 }, { ...sg(33, 9, 700, 'Otra') }], [], { tiposConsultados: new Set([33]) });
+  assert.ok(dup.alertas.filter((x) => x.folio === 9).every((x) => !x.republicar));
+  const blanco = cuadrar([{ ...sg(33, 8, 500), en_blanco: 1, sin_xml: 1 }], [], { tiposConsultados: new Set([33]) });
+  assert.ok(blanco.alertas.every((x) => !x.republicar));
+});

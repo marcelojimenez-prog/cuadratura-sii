@@ -14,6 +14,11 @@ export default function Agentes({ abrirCliente }) {
   }, []);
 
   const enLinea = (a) => a.activo && a.ultimoContacto && Date.now() - Date.parse(a.ultimoContacto.replace(' ', 'T') + 'Z') < 5 * 60000;
+  // Agente en línea hace más de 2 horas que no ha enviado las ventas del mes en curso: suele ser una
+  // carpeta de Sisgen equivocada (un respaldo antiguo) o una tabla F1 del mes que no existe
+  const mesActual = new Date().toISOString().slice(0, 7);
+  const sinVentasDelMes = (a) => enLinea(a) && a.creadoEn && Date.now() - Date.parse(a.creadoEn.replace(' ', 'T') + 'Z') > 2 * 3600000
+    && (!a.ventasMes || a.ventasMes < mesActual);
 
   return (
     <>
@@ -48,6 +53,12 @@ export default function Agentes({ abrirCliente }) {
                         : enLinea(a) ? <span className="badge text-bg-success">En línea</span>
                         : <span className="badge text-bg-danger">Sin conexión {haceCuanto(a.ultimoContacto)}</span>}
                       {a.error && <div className="small text-danger" title={a.error}>{a.error.slice(0, 60)}</div>}
+                      {sinVentasDelMes(a) && (
+                        <div className="small text-danger fw-semibold"
+                          title={`Último mes de ventas recibido: ${a.ventasMes ?? 'ninguno'}. Probablemente el agente lee una carpeta de Sisgen equivocada (p. ej. un respaldo): revisa "sisgen=" en agente.ini.`}>
+                          No envía ventas del mes actual{a.ventasMes ? ` (último: ${a.ventasMes})` : ''}: revisar carpeta de Sisgen
+                        </div>
+                      )}
                     </td>
                     <td className="small">
                       {a.certificado

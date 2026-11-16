@@ -39,7 +39,7 @@ r.get('/razones', (_req, res) => {
 /** Todos los agentes instalados, con su estado (para la pantalla "Agentes instalados"). */
 r.get('/agentes', (_req, res) => {
   const filas = getDb().prepare(
-    `SELECT a.id, a.activo, a.ultimo_contacto, a.version, a.equipo, a.ultimo_error, a.historial,
+    `SELECT a.id, a.activo, a.ultimo_contacto, a.version, a.equipo, a.ultimo_error, a.historial, a.creado_en, a.certificado, a.ventas_mes,
             s.nombre AS sucursal, e.rut, e.razon_social, COALESCE(c.id, ci.id) AS cliente_id, COALESCE(c.nombre, ci.nombre) AS cliente
        FROM agentes a
        LEFT JOIN sucursales s ON s.id = a.sucursal_id
@@ -51,7 +51,9 @@ r.get('/agentes', (_req, res) => {
   res.json(filas.map((a) => ({
     id: a.id, activo: !!a.activo, ultimoContacto: a.ultimo_contacto, version: a.version, equipo: a.equipo, error: a.ultimo_error,
     historial: a.historial, sucursal: a.sucursal, rut: a.rut, razonSocial: a.razon_social, clienteId: a.cliente_id, cliente: a.cliente,
-    certificado: a.rut ? estadoCertificado(a.rut) : null,
+    // El certificado de cada agente (cada sucursal puede tener su propia carpeta de certificado)
+    certificado: a.certificado ?? (a.rut ? estadoCertificado(a.rut) : null),
+    creadoEn: a.creado_en, ventasMes: a.ventas_mes,
   })));
 });
 

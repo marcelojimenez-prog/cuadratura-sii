@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { abrirDb, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen } from '../db.js';
+import { abrirDb, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen, guardarDocsSii } from '../db.js';
 
 abrirDb(':memory:');
 const { ajustarOtrosMeses } = await import('../lib/cuadratura/resumen.js');
@@ -40,4 +40,34 @@ test('factura aceptada según Track ID pero aún no en el Registro de Ventas: no
   assert.ok(!r.alertas.some((a) => a.folio === 15911));
   const sinEnvio = cuadrar([doc], [], { tiposConsultados: new Set([33]) });
   assert.equal(sinEnvio.documentos[0].estado, 'FALTA_EN_SII');
+});
+
+test('factura guardada en las tablas de octubre con fecha de noviembre, y en blanco en noviembre: es de noviembre', () => {
+  guardarEmpresa({ rut: '22222222-2', razonSocial: 'Empresa B' });
+  const s = guardarSucursal({ rutEmpresa: '22222222-2', codigo: 'B', nombre: 'Sucursal B' });
+  const doc = (folio, extra = {}) => ({ rutEmisor: '22222222-2', tipoSisgen: 'FE', tipoSii: 33, folio, fecha: '2026-11-02', total: 412480, ...extra });
+  reemplazarDocsSisgen(s, '2026-10', [doc(165539, { sinXml: true }), doc(165000, { fecha: '2026-10-30' })]);
+  reemplazarDocsSisgen(s, '2026-11', [doc(165539, { enBlanco: true, sinXml: true })]);
+
+  const fila = (folio, extra = {}) => ({ tipo_sii: 33, folio, en_blanco: 0, sin_xml: 0, fecha: '2026-11-02', ...extra });
+  // octubre: la copia con fecha de noviembre no se cuenta (no pide "republicar")
+  const oct = ajustarOtrosMeses('22222222-2', '2026-10', [fila(165539, { sin_xml: 1 }), fila(165000, { fecha: '2026-10-30' })], new Map());
+  assert.deepEqual(oct.map((d) => d.folio), [165000]);
+  // noviembre: sigue como documento en blanco (no se descarta por la copia de octubre)
+  const nov = ajustarOtrosMeses('22222222-2', '2026-11', [fila(165539, { en_blanco: 1, sin_xml: 1 })], new Map());
+  assert.deepEqual(nov.map((d) => d.folio), [165539]);
+});
+
+test('nota de crédito de septiembre en blanco en las tablas de octubre y aceptada por el SII en septiembre: no se cuenta en octubre', () => {
+  guardarEmpresa({ rut: '33333333-3', razonSocial: 'Empresa C' });
+  const s = guardarSucursal({ rutEmpresa: '33333333-3', codigo: 'C', nombre: 'Sucursal C' });
+  reemplazarDocsSisgen(s, '2026-10', [
+    { rutEmisor: '33333333-3', tipoSisgen: 'NE', tipoSii: 61, folio: 36528, fecha: '2026-09-16', total: 853502, enBlanco: true },
+    { rutEmisor: '33333333-3', tipoSisgen: 'NE', tipoSii: 61, folio: 36700, fecha: '2026-09-20', total: 100, enBlanco: true },
+  ]);
+  guardarDocsSii([{ rutEmisor: '33333333-3', periodo: '2026-09', tipoSii: 61, folio: 36528, fecha: '2026-09-16', total: 853502, estado: 'REGISTRADO', fuente: 'RCV' }]);
+  const fila = (folio, fecha) => ({ tipo_sii: 61, folio, fecha, en_blanco: 1, sin_xml: 0 });
+  const oct = ajustarOtrosMeses('33333333-3', '2026-10', [fila(36528, '2026-09-16'), fila(36700, '2026-09-20')], new Map());
+  // 36528 está en el SII en septiembre: se va a septiembre. 36700 no está en el SII: sigue avisándose aquí.
+  assert.deepEqual(oct.map((d) => d.folio), [36700]);
 });

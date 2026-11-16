@@ -126,6 +126,7 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
       fuenteSii: s?.fuente ?? null,
       consultadoEn: s?.consultado_en ?? null,
       enBlanco: !!d.en_blanco,
+      respaldo: d.en_blanco || d.sin_xml ? (d.respaldo ?? null) : null, // {encontrado, fuente, lineas…} o {encontrado:false}
       sinXml: !!d.sin_xml,
       ...infoCaf(duenoDelFolio(d.tipo_sii, d.folio, d.sucursal), d.sucursal),
       estado,
@@ -177,12 +178,24 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
     SOLO_EN_SII: 'Está en el SII pero no en Sisgen',
     ANULADO: 'Anulado en el SII',
   };
+  // Documento completo en Sisgen (no en blanco) que no llegó al SII y cuyo folio no se usó en otra
+  // sucursal: lo que corresponde es republicarlo. Se adjunta lo que llevaba (backup o tabla DT).
+  const paraRepublicar = (d) => d.tipoSisgen != null && !d.enBlanco
+    && (vistos.get(clave(d.tipoSii, d.folio))?.length ?? 0) === 1
+    && (d.estado === ESTADOS.FALTA_EN_SII || d.sinXml);
+  const republicar = (d) => (paraRepublicar(d) ? {
+    republicar: true,
+    ...(d.respaldo?.encontrado ? { respaldo: d.respaldo } : {}),
+    motivo: 'Está completo en Sisgen y el folio no se usó en otra sucursal, pero no llegó al SII: republicar' +
+      (d.respaldo?.encontrado ? '. Llevaba: ' + d.respaldo.lineas.map((l) => `${l.cantidad} × ${l.descripcion}`).join(', ') : ''),
+  } : {});
   for (const d of documentos) {
     if (!NIVEL[d.estado]) continue;
     alertas.push({
       nivel: NIVEL[d.estado], codigo: d.estado, titulo: TEXTO[d.estado],
       tipoSii: d.tipoSii, tipoNombre: d.tipoNombre, folio: d.folio,
       sucursal: d.sucursal, motivo: d.motivo, monto: d.montoSisgen ?? d.montoSii,
+      ...republicar(d),
     });
   }
 
@@ -193,6 +206,9 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
       nivel: 'alta', codigo: 'DOCUMENTO_EN_BLANCO', titulo: 'Documento en blanco',
       tipoSii: d.tipoSii, tipoNombre: d.tipoNombre, folio: d.folio, sucursal: d.sucursal,
       monto: d.montoSisgen, motivo: 'No quedó registrado completo en Sisgen',
+      ...(d.respaldo?.encontrado ? { respaldo: d.respaldo, motivo: `No quedó registrado completo en Sisgen. Según ${d.respaldo.fuente === 'DT' ? 'la tabla DT' : 'la carpeta backup'} llevaba: ` +
+        d.respaldo.lineas.map((l) => `${l.cantidad} × ${l.descripcion}`).join(', ') } : {}),
+      ...(d.respaldo && !d.respaldo.encontrado ? { respaldo: d.respaldo, motivo: 'Detalle no encontrado en ninguna tabla: eliminar' } : {}),
     });
   }
 
@@ -203,6 +219,7 @@ export function cuadrar(docsSisgen, docsSii, opciones = {}) {
       nivel: 'alta', codigo: 'SIN_XML', titulo: 'Sin XML generado',
       tipoSii: d.tipoSii, tipoNombre: d.tipoNombre, folio: d.folio, sucursal: d.sucursal, monto: d.montoSisgen,
       motivo: 'Está registrado en Sisgen pero no se generó su XML: probablemente no se envió al SII',
+      ...republicar(d),
     });
   }
 
@@ -312,6 +329,10 @@ function agruparPorDocumento(alertas) {
     principal.nivel = g.reduce((m, x) => (nivel[x.nivel] < nivel[m] ? x.nivel : m), principal.nivel);
     principal.codigos = g.map((x) => x.codigo);
     principal.adicionales = g.slice(1).map((x) => x.titulo);
+    // Lo que llevaba el documento en blanco (carpeta backup) se conserva en la alerta principal
+    const conRespaldo = g.find((x) => x.respaldo);
+    if (conRespaldo && !principal.respaldo) principal.respaldo = conRespaldo.respaldo;
+    if (g.some((x) => x.republicar)) principal.republicar = true;
     salida.push(principal);
   }
   return salida;

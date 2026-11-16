@@ -5,7 +5,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { XMLParser } from 'fast-xml-parser';
 import {
-  getDb, transaccion, carpetaXml, rutaRelativaXml, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen, reemplazarRangosCaf, reemplazarXmlOtrosMeses,
+  getDb, transaccion, carpetaXml, rutaRelativaXml, rutaRelativaCompra, guardarEmpresa, guardarSucursal, reemplazarDocsSisgen, reemplazarRangosCaf, reemplazarXmlOtrosMeses,
 } from './db.js';
 import { tokenSesion, hashToken } from './lib/auth/claves.js';
 import { TIPO_SISGEN_POR_SII, tipoSii } from './lib/sisgen/tipos.js';
@@ -62,12 +62,27 @@ export function vincularAgente(agente, empresa) {
   }
   guardarEmpresa({ rut, razonSocial });
   if (agente.cliente_id) d.prepare('UPDATE empresas SET cliente_id = COALESCE(cliente_id, ?) WHERE rut = ?').run(agente.cliente_id, rut);
-  const sucId = guardarSucursal({ rutEmpresa: rut, codigo: codigoDe(nombre), nombre });
-  if (d.prepare('SELECT id FROM agentes WHERE sucursal_id = ? AND id <> ?').get(sucId, agente.id)) {
-    throw conflicto(`La sucursal ${nombre} ya tiene un agente conectado`);
-  }
+  const sucId = sucursalParecida(d, rut, codigoDe(nombre)) ?? guardarSucursal({ rutEmpresa: rut, codigo: codigoDe(nombre), nombre });
+  const otro = d.prepare('SELECT id, activo FROM agentes WHERE sucursal_id = ? AND id <> ?').get(sucId, agente.id);
+  if (otro?.activo) throw conflicto(`La sucursal ${d.prepare('SELECT nombre FROM sucursales WHERE id = ?').get(sucId)?.nombre ?? nombre} ya tiene un agente conectado (desactívalo en el portal si se reinstala en otro equipo)`);
+  // Un agente desactivado de esa sucursal se reemplaza por el nuevo
+  if (otro) d.prepare('DELETE FROM agentes WHERE id = ?').run(otro.id);
   d.prepare('UPDATE agentes SET sucursal_id = ? WHERE id = ?').run(sucId, agente.id);
-  return { ...agente, sucursal_id: sucId, sucursal: nombre, rut };
+  const nombreSuc = d.prepare('SELECT nombre FROM sucursales WHERE id = ?').get(sucId)?.nombre ?? nombre;
+  return { ...agente, sucursal_id: sucId, sucursal: nombreSuc, rut };
+}
+
+/**
+ * Sucursal ya existente (importada por red) cuyo código coincide o está contenido en el del agente:
+ * "TOP_DRINKS_EXPOSICION" -> "EXPOSICION". Solo si hay una sola candidata, para no adivinar.
+ */
+function sucursalParecida(d, rut, codigo) {
+  const todas = d.prepare('SELECT id, codigo FROM sucursales WHERE rut_empresa = ?').all(rut);
+  const exacta = todas.find((s) => s.codigo === codigo);
+  if (exacta) return exacta.id;
+  const parte = (a, b) => b.length >= 4 && (`_${a}_`).includes(`_${b}_`);
+  const candidatas = todas.filter((s) => parte(codigo, s.codigo) || parte(s.codigo, codigo));
+  return candidatas.length === 1 ? candidatas[0].id : null;
 }
 
 export function activarAgente(sucursalId, activo) {
@@ -92,6 +107,18 @@ export function registrarContacto(agenteId, { version, equipo, ip, error } = {})
               ip = COALESCE(?, ip), ultimo_error = ? WHERE id = ?`
     )
     .run(ahoraUtc(), version ?? null, equipo ?? null, ip ?? null, error ?? null, agenteId);
+}
+
+/** Estado del certificado informado por el agente en /hola ("ok; vence …", "VENCIDO; …", …). */
+export function anotarCertificadoAgente(agenteId, certificado) {
+  if (typeof certificado !== 'string' || !certificado) return;
+  getDb().prepare('UPDATE agentes SET certificado = ? WHERE id = ?').run(certificado.slice(0, 200), agenteId);
+}
+
+/** Mes de ventas recibido del agente: se guarda el más reciente. */
+export function anotarVentasMesAgente(agenteId, periodo) {
+  if (!/^\d{4}-\d{2}$/.test(String(periodo ?? ''))) return;
+  getDb().prepare('UPDATE agentes SET ventas_mes = ? WHERE id = ? AND (ventas_mes IS NULL OR ventas_mes < ?)').run(periodo, agenteId, periodo);
 }
 
 export function estadoAgente(sucursalId) {
@@ -157,6 +184,7 @@ export function datosDte(xml) {
     folio: n(enc.IdDoc.Folio),
     fecha: String(enc.IdDoc.FchEmis ?? ''),
     rutEmisor: String(enc.Emisor?.RUTEmisor ?? '').toUpperCase(),
+    nombreEmisor: String(enc.Emisor?.RznSoc ?? enc.Emisor?.RznSocEmisor ?? '').trim().slice(0, 100) || null,
     rutReceptor: enc.Receptor?.RUTRecep ? String(enc.Receptor.RUTRecep) : null,
     nombreReceptor: enc.Receptor?.RznSocRecep ? String(enc.Receptor.RznSocRecep).slice(0, 60) : null,
     neto: n(enc.Totales?.MntNeto),
@@ -193,6 +221,7 @@ export function guardarXml(agente, archivos, { historial = false } = {}) {
   let guardados = 0;
   const rechazados = [];
   const filas = [];
+  const corregidos = [];
   for (const a of archivos) {
     try {
       const contenido = zlib.gunzipSync(Buffer.from(String(a.contenido ?? ''), 'base64'), { maxOutputLength: 8 * 1024 * 1024 }).toString('latin1');
@@ -226,6 +255,19 @@ export function guardarXml(agente, archivos, { historial = false } = {}) {
               recibido_en = datetime('now') WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ?`
     );
     const existe = d.prepare('SELECT 1 FROM xml_documentos WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ?');
+    // Corrección: XML de un documento que estaba en blanco / sin XML, o republicado (un archivo distinto y más
+    // nuevo que el que ya teníamos; el mismo archivo reenviado no cuenta)
+    const conProblema = d.prepare(`SELECT 1 FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ? AND (en_blanco = 1 OR sin_xml = 1) AND fecha < date('now', 'localtime')`);
+    const anterior = d.prepare('SELECT archivo FROM xml_documentos WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ?');
+    const marca = (nombre) => /-(\d{8}-\d{6})\.xml$/i.exec(String(nombre ?? ''))?.[1] ?? null;
+    for (const x of filas) {
+      if (historial) continue;
+      const ant = anterior.get(agente.rut, x.tipo, x.folio)?.archivo;
+      const republicado = ant && marca(x.archivo) && marca(ant) && marca(x.archivo) > marca(ant);
+      if (republicado || conProblema.get(agente.rut, x.tipo, x.folio)) {
+        corregidos.push({ tipo: x.tipo, folio: x.folio, periodo: x.fecha.slice(0, 7) });
+      }
+    }
     for (const x of filas) {
       const rel = rutaRelativaXml(agente.rut, x.tipo, x.folio);
       const abs = path.join(base, rel);
@@ -254,7 +296,73 @@ export function guardarXml(agente, archivos, { historial = false } = {}) {
         x.rutReceptor, x.nombreReceptor, x.neto, x.exento, x.iva, x.total);
     }
   });
-  return { guardados, rechazados };
+  return { guardados, rechazados, corregidos };
+}
+
+/**
+ * Compras: XML recibidos de proveedores (carpeta procesos\Correo\Descargas de Sisgen).
+ * Solo se guardan los DTE cuyo receptor es esta razón social; lo demás (respuestas, acuses, otros
+ * archivos del correo) se ignora. Un mismo documento se guarda una vez (proveedor + tipo + folio).
+ */
+export function guardarCompras(agente, archivos, motivos = null) {
+  let guardados = 0, ignorados = 0;
+  const anotar = (motivo, muestra) => {
+    if (!motivos) return;
+    motivos.conteo[motivo] = (motivos.conteo[motivo] ?? 0) + 1;
+    if (muestra && (motivos.muestras[motivo] ??= []).length < 15) motivos.muestras[motivo].push(muestra);
+  };
+  const rechazados = [];
+  const filas = [];
+  const propio = agente.rut.toUpperCase();
+  for (const a of archivos) {
+    try {
+      const contenido = zlib.gunzipSync(Buffer.from(String(a.contenido ?? ''), 'base64'), { maxOutputLength: 8 * 1024 * 1024 }).toString('latin1');
+      if (/RSASK|PRIVATE KEY/i.test(contenido)) throw new Error('El archivo contiene una llave privada: no se guarda');
+      let dtes = [];
+      try { dtes = separarDtes(contenido); } catch { dtes = []; }
+      const raiz = /<([A-Za-z_][\w.:-]*)[\s>]/.exec(contenido.replace(/<\?xml[^>]*>/, '').replace(/<!--[\s\S]*?-->/g, ''))?.[1] ?? '?';
+      if (!dtes.length) anotar(`sin DTE (raíz ${raiz})`, texto(a.nombre, 60));
+      let alguno = false;
+      for (const xml of dtes) {
+        let x = null;
+        try { x = datosDte(xml); } catch { x = null; }
+        if (!x || !x.tipo || !x.folio || !/^\d{4}-\d{2}-\d{2}$/.test(x.fecha) || !/^\d{1,8}-[\dK]$/.test(x.rutEmisor)) {
+          anotar('DTE ilegible', `${texto(a.nombre, 60)} (raíz ${raiz})`);
+          continue;
+        }
+        if (String(x.rutReceptor ?? '').toUpperCase() !== propio) { // no es una compra de esta razón social
+          anotar(x.rutEmisor === propio ? 'emitido por la propia empresa' : 'receptor es otro RUT', `${texto(a.nombre, 60)}: T${x.tipo} F${x.folio} emisor ${x.rutEmisor} receptor ${x.rutReceptor}`);
+          continue;
+        }
+        anotar('compra');
+        filas.push({ ...x, xml, archivo: texto(a.nombre, 120) });
+        alguno = true;
+      }
+      if (!alguno) ignorados++;
+    } catch (e) {
+      rechazados.push({ nombre: texto(a.nombre, 120), motivo: e.message.slice(0, 80) });
+    }
+  }
+  const base = carpetaXml();
+  transaccion((d) => {
+    const ins = d.prepare(
+      `INSERT INTO compras_documentos (rut_receptor, rut_emisor, tipo_sii, folio, sucursal_id, razon_social, fecha, neto, exento, iva, total, archivo, ruta)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT (rut_receptor, rut_emisor, tipo_sii, folio) DO UPDATE SET
+         razon_social = COALESCE(excluded.razon_social, compras_documentos.razon_social), fecha = excluded.fecha,
+         neto = excluded.neto, exento = excluded.exento, iva = excluded.iva, total = excluded.total,
+         archivo = excluded.archivo, sucursal_id = COALESCE(compras_documentos.sucursal_id, excluded.sucursal_id)`
+    );
+    for (const x of filas) {
+      const rel = rutaRelativaCompra(agente.rut, x.rutEmisor, x.tipo, x.folio);
+      const abs = path.join(base, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, zlib.gzipSync(Buffer.from(x.xml, 'latin1')));
+      ins.run(agente.rut, x.rutEmisor, x.tipo, x.folio, agente.sucursal_id, x.nombreEmisor, x.fecha, x.neto, x.exento, x.iva, x.total, x.archivo, rel);
+      guardados++;
+    }
+  });
+  return { guardados, ignorados, rechazados };
 }
 
 /** XML archivado de un documento (texto), o null. */

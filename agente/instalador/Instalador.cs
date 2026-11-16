@@ -78,7 +78,9 @@ namespace SisgenAgente
                     foreach (var nivel2 in Subcarpetas(nivel1)) lista.AddRange(Candidatos(nivel2));
                 }
             }
-            return lista;
+            // Primero la instalación en uso: no un respaldo/copia y con ventas más recientes (tabla F1 del último mes).
+            // Antes se elegía la primera en orden alfabético, y "C:\BackUP\sisgen…" quedaba antes que "C:\SisGen".
+            return lista.OrderBy(c => c.EsRespaldo).ThenByDescending(c => c.UltimaVenta).ToList();
         }
 
         /// <summary>Si la carpeta es una instalación de Sisgen, sus carpetas de datos (una por razón social).</summary>
@@ -112,10 +114,35 @@ namespace SisgenAgente
     public class Candidato
     {
         public string Raiz, Datos;
+        DateTime? ultima;
+
+        /// <summary>Fecha de la tabla de ventas (F1MMAAAA.dbf) modificada más recientemente.</summary>
+        public DateTime UltimaVenta
+        {
+            get
+            {
+                if (ultima == null)
+                {
+                    try { ultima = new DirectoryInfo(Datos).GetFiles("F1*.dbf").Select(f => f.LastWriteTime).DefaultIfEmpty(DateTime.MinValue).Max(); }
+                    catch { ultima = DateTime.MinValue; }
+                }
+                return ultima.Value;
+            }
+        }
+
+        /// <summary>Carpeta que parece un respaldo o copia (backup, respaldo, copia, old…).</summary>
+        public bool EsRespaldo
+        {
+            get { return System.Text.RegularExpressions.Regex.IsMatch(Raiz, @"back\s*up|respaldo|copia|\bold\b|antiguo|\d{2}-\d{2}-\d{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase); }
+        }
+
         public override string ToString()
         {
             string d = Path.GetFileName(Datos);
-            return d.Equals("datos", StringComparison.OrdinalIgnoreCase) ? Raiz : Raiz + "   (datos: " + d + ")";
+            string s = d.Equals("datos", StringComparison.OrdinalIgnoreCase) ? Raiz : Raiz + "   (datos: " + d + ")";
+            if (UltimaVenta > DateTime.MinValue) s += "   · ventas al " + UltimaVenta.ToString("dd-MM-yyyy");
+            if (EsRespaldo) s += "   · RESPALDO";
+            return s;
         }
     }
 

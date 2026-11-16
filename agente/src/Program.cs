@@ -17,7 +17,7 @@ namespace SisgenAgente
 {
     public static class Program
     {
-        public const string Version = "1.5.0";
+        public const string Version = "1.6.10";
         public static readonly string Carpeta = AppDomain.CurrentDomain.BaseDirectory;
 
         public static int Main(string[] args)
@@ -61,6 +61,8 @@ namespace SisgenAgente
 
         protected override void OnStart(string[] args)
         {
+            Actualizador.Habilitado = true;
+            Actualizador.AlIniciar();
             var cfg = Config.Cargar(Path.Combine(Program.Carpeta, "agente.ini"));
             motor = new Motor(cfg);
             motor.Iniciar();

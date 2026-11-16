@@ -205,12 +205,36 @@ function Clientes({ datos, ejecutar }) {
     e.preventDefault();
     if (await ejecutar(() => api(`/api/admin/clientes/${editando.id}`, { metodo: 'PATCH', cuerpo: { nombre: editando.nombre } }), 'Cliente renombrado')) setEditando(null);
   };
+  const [llave, setLlave] = useState(null); // { cliente, llave } se muestra una sola vez
+  const generarLlave = async (c) => {
+    if (!window.confirm(`¿Generar una llave para instalar el agente en un servidor de ${c.nombre}?`)) return;
+    try {
+      const r = await api(`/api/admin/clientes/${c.id}/llave-instalacion`, { metodo: 'POST' });
+      setLlave({ cliente: c.nombre, llave: r.llave });
+    } catch (e) { window.alert(e.message); }
+  };
 
   return (
     <>
       <p className="text-secondary small">
         Un cliente es la empresa con la que trabaja Sisgen. Puede tener una o varias razones sociales; sus usuarios ven todas ellas.
+        Para instalar el agente en un servidor del cliente, usa <strong>Llave del agente</strong>: al instalarlo, su razón social y sucursal se crean solas.
       </p>
+      {llave && (
+        <div className="alert alert-success" role="status">
+          <div className="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <strong>Llave del agente para {llave.cliente}</strong>
+              <div className="small">Pégala en el instalador (paso "Llave de instalación"). Por seguridad no se vuelve a mostrar.</div>
+            </div>
+            <button type="button" className="btn-close" aria-label="Cerrar" onClick={() => setLlave(null)} />
+          </div>
+          <div className="input-group input-group-sm mt-2">
+            <input className="form-control font-monospace" readOnly value={llave.llave} aria-label="Llave del agente" onFocus={(e) => e.target.select()} />
+            <button type="button" className="btn btn-outline-dark" onClick={() => navigator.clipboard?.writeText(llave.llave)}>Copiar</button>
+          </div>
+        </div>
+      )}
       <form className="d-flex gap-2 mb-3" onSubmit={crear} style={{ maxWidth: '32rem' }}>
         <input className="form-control form-control-sm" placeholder="Nombre del nuevo cliente" aria-label="Nombre del nuevo cliente"
           value={nombre} onChange={(e) => setNombre(e.target.value)} />
@@ -237,6 +261,7 @@ function Clientes({ datos, ejecutar }) {
                   <td className="text-end">{c.usuarios}</td>
                   <td>{c.activo ? <span className="badge text-bg-success">Activo</span> : <span className="badge text-bg-secondary" title="Sus usuarios no ven datos">Inactivo</span>}</td>
                   <td className="text-end text-nowrap">
+                    <button type="button" className="btn btn-sm btn-outline-primary me-1" onClick={() => generarLlave(c)}>Llave del agente</button>
                     <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => setEditando({ id: c.id, nombre: c.nombre })}>Renombrar</button>
                     <button type="button" className={`btn btn-sm ${c.activo ? 'btn-outline-danger' : 'btn-outline-success'}`}
                       onClick={() => ejecutar(() => api(`/api/admin/clientes/${c.id}`, { metodo: 'PATCH', cuerpo: { activo: !c.activo } }),

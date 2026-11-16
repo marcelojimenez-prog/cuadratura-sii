@@ -191,6 +191,43 @@ CREATE TABLE IF NOT EXISTS agentes (
   ultimo_error     TEXT
 );
 
+-- Compras: documentos recibidos de proveedores (XML de procesos\Correo\Descargas de Sisgen, subidos por el agente)
+CREATE TABLE IF NOT EXISTS compras_documentos (
+  rut_receptor   TEXT NOT NULL,             -- la razón social del portal
+  rut_emisor     TEXT NOT NULL,             -- proveedor
+  tipo_sii       INTEGER NOT NULL,
+  folio          INTEGER NOT NULL,
+  sucursal_id    INTEGER REFERENCES sucursales(id),
+  razon_social   TEXT,                      -- del proveedor
+  fecha          TEXT,
+  neto           REAL NOT NULL DEFAULT 0,
+  exento         REAL NOT NULL DEFAULT 0,
+  iva            REAL NOT NULL DEFAULT 0,
+  total          REAL NOT NULL DEFAULT 0,
+  archivo        TEXT,
+  ruta           TEXT NOT NULL,             -- relativa a la carpeta de XML del portal
+  recibido_en    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (rut_receptor, rut_emisor, tipo_sii, folio)
+);
+CREATE INDEX IF NOT EXISTS idx_compras_fecha ON compras_documentos (rut_receptor, fecha);
+
+-- Lo que llevaba un documento "en blanco", recuperado de la carpeta backup de Sisgen (AAAAMMDD.dbf)
+CREATE TABLE IF NOT EXISTS respaldo_documentos (
+  rut_emisor    TEXT NOT NULL,
+  tipo_sisgen   TEXT NOT NULL,
+  folio         INTEGER NOT NULL,
+  sucursal_id   INTEGER REFERENCES sucursales(id),
+  encontrado    INTEGER NOT NULL DEFAULT 0,
+  archivo       TEXT,
+  hora          TEXT,
+  rut_cliente   TEXT,
+  total         REAL,
+  lineas        TEXT,                      -- JSON [{codigo, descripcion, cantidad, precio, descuento, total}]
+  fuente        TEXT,                      -- BACKUP (carpeta backup de la estación) o DT (tabla DTMMAAAA)
+  buscado_en    TEXT NOT NULL,
+  PRIMARY KEY (rut_emisor, tipo_sisgen, folio)
+);
+
 -- Envío de cada documento al SII según DTESERVICE (tablas trazadte / trazabol de la sucursal)
 CREATE TABLE IF NOT EXISTS envios_sii (
   rut_emisor     TEXT NOT NULL,
@@ -271,7 +308,13 @@ function migrar(d) {
       DROP TABLE agentes_v1;
       COMMIT;`);
   }
+  const colsRes = d.prepare('PRAGMA table_info(respaldo_documentos)').all().map((c) => c.name);
+  if (colsRes.length && !colsRes.includes('fuente')) d.exec('ALTER TABLE respaldo_documentos ADD COLUMN fuente TEXT');
   if (!colsAg.includes('historial')) d.exec('ALTER TABLE agentes ADD COLUMN historial TEXT');
+  // Estado del certificado que informa cada agente, y último mes de ventas que envió (para detectar
+  // un agente que lee una carpeta de Sisgen equivocada, p. ej. un respaldo antiguo)
+  if (!colsAg.includes('certificado')) d.exec('ALTER TABLE agentes ADD COLUMN certificado TEXT');
+  if (!colsAg.includes('ventas_mes')) d.exec('ALTER TABLE agentes ADD COLUMN ventas_mes TEXT');
   // Fecha de autorización del CAF (<FA>): facturas y notas vencen a los 180 días
   const colsCaf = d.prepare('PRAGMA table_info(caf_rangos)').all().map((c) => c.name);
   if (!colsCaf.includes('fecha_autorizacion')) d.exec('ALTER TABLE caf_rangos ADD COLUMN fecha_autorizacion TEXT');
@@ -301,6 +344,24 @@ function migrar(d) {
 
 /** Ruta (relativa a la carpeta xml) donde se guarda el XML comprimido de un documento. */
 export const rutaRelativaXml = (rut, tipo, folio) => path.join(rut, String(tipo), `${folio}.xml.gz`);
+export const rutaRelativaCompra = (rut, emisor, tipo, folio) => path.join('compras', rut, emisor, String(tipo), `${folio}.xml.gz`);
+
+/** Compras de una razón social en un periodo (YYYY-MM). */
+export function comprasPeriodo(rut, periodo) {
+  return getDb().prepare(`
+    SELECT c.rut_emisor AS rutEmisor, c.razon_social AS razonSocial, c.tipo_sii AS tipoSii, c.folio, c.fecha,
+           c.neto, c.exento, c.iva, c.total, s.nombre AS sucursal
+      FROM compras_documentos c LEFT JOIN sucursales s ON s.id = c.sucursal_id
+     WHERE c.rut_receptor = ? AND c.fecha LIKE ? || '%'
+     ORDER BY c.fecha DESC, c.razon_social, c.folio`).all(rut, periodo).map((x) => ({ ...x }));
+}
+
+/** Ruta en disco del XML de una compra, o null. */
+export function rutaCompra(rut, emisor, tipo, folio) {
+  const f = getDb().prepare('SELECT ruta FROM compras_documentos WHERE rut_receptor = ? AND rut_emisor = ? AND tipo_sii = ? AND folio = ?')
+    .get(rut, emisor, tipo, folio);
+  return f ? path.join(carpetaXml(), f.ruta) : null;
+}
 
 export function getDb() {
   if (!db) throw new Error('Base de datos no inicializada');
@@ -488,7 +549,8 @@ export function huellaDatos(rut, periodo) {
   const c = sincronizacionSii(rut, periodo);
   const f = d.prepare('SELECT COUNT(*) AS n, MAX(consultado_en) AS m FROM sii_folios_externos WHERE rut_emisor = ? AND periodo = ?').get(rut, periodo);
   const g = d.prepare("SELECT COUNT(*) AS n, MAX(actualizado_en) AS m FROM envios_sii WHERE rut_emisor = ? AND fecha LIKE ? || '%'").get(rut, periodo);
-  return [a.n, a.m, b.n, b.m, c?.consultado_en, f.n, f.m, g.n, g.m].join('|');
+  const h = d.prepare('SELECT COUNT(*) AS n, MAX(buscado_en) AS m FROM respaldo_documentos WHERE rut_emisor = ?').get(rut);
+  return [a.n, a.m, b.n, b.m, c?.consultado_en, f.n, f.m, g.n, g.m, h.n, h.m].join('|');
 }
 
 export function resumenSii(rut, periodo) {
@@ -520,6 +582,66 @@ export function xmlOtrosMeses(rut, periodo) {
 }
 
 /** Envíos al SII (Track ID y respuesta según DTESERVICE) de los documentos de un periodo. */
+/** Guarda lo encontrado (o no) en la carpeta backup para documentos en blanco. resultados: Map 'BE-123' -> {encontrado,…} */
+export function guardarRespaldos(rut, sucursalId, resultados) {
+  return transaccion((d) => {
+    const ins = d.prepare(`INSERT INTO respaldo_documentos (rut_emisor, tipo_sisgen, folio, sucursal_id, encontrado, archivo, hora, rut_cliente, total, lineas, buscado_en, fuente)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT (rut_emisor, tipo_sisgen, folio) DO UPDATE SET sucursal_id = excluded.sucursal_id, encontrado = excluded.encontrado,
+        archivo = excluded.archivo, hora = excluded.hora, rut_cliente = excluded.rut_cliente, total = excluded.total,
+        lineas = excluded.lineas, buscado_en = excluded.buscado_en, fuente = excluded.fuente
+      WHERE excluded.encontrado = 1 OR respaldo_documentos.encontrado = 0`);
+    let n = 0;
+    for (const [k, r] of resultados) {
+      const [tipo, folio] = k.split('-');
+      ins.run(rut, tipo, parseInt(folio, 10), sucursalId ?? null, r.encontrado ? 1 : 0, r.archivo ?? null, r.hora ?? null,
+        r.rutCliente ?? null, r.total ?? null, r.encontrado ? JSON.stringify(r.lineas ?? []) : null, new Date().toISOString().replace('T', ' ').slice(0, 19), r.encontrado ? (r.fuente ?? 'BACKUP') : null);
+      if (r.encontrado) n++;
+    }
+    return n;
+  });
+}
+
+/** Búsquedas del detalle de documentos en blanco: Map 'BE-123' -> {encontrado, fuente, …} (también las no encontradas). */
+export function respaldosDocumentos(rut) {
+  const filas = getDb().prepare('SELECT * FROM respaldo_documentos WHERE rut_emisor = ?').all(rut);
+  return new Map(filas.map((f) => [`${f.tipo_sisgen}-${f.folio}`, f.encontrado
+    ? { encontrado: true, fuente: f.fuente ?? 'BACKUP', archivo: f.archivo, hora: f.hora, rutCliente: f.rut_cliente, total: f.total, lineas: JSON.parse(f.lineas ?? '[]') }
+    : { encontrado: false }]));
+}
+
+/** Un documento en blanco con lo que llevaba según la carpeta backup (o null si no se encontró). */
+export function respaldoDocumento(rut, tipoSisgen, folio) {
+  const f = getDb().prepare(`
+    SELECT r.*, d.fecha, d.total AS total_sisgen, d.en_blanco, d.sin_xml, s.nombre AS sucursal, e.razon_social
+      FROM respaldo_documentos r
+      LEFT JOIN docs_sisgen d ON d.rut_emisor = r.rut_emisor AND d.tipo_sisgen = r.tipo_sisgen AND d.folio = r.folio
+      LEFT JOIN sucursales s ON s.id = COALESCE(d.sucursal_id, r.sucursal_id)
+      LEFT JOIN empresas e ON e.rut = r.rut_emisor
+     WHERE r.rut_emisor = ? AND r.tipo_sisgen = ? AND r.folio = ? AND r.encontrado = 1
+     ORDER BY d.fecha DESC LIMIT 1`).get(rut, tipoSisgen, folio);
+  if (!f) return null;
+  return {
+    rut, razonSocial: f.razon_social, sucursal: f.sucursal, tipoSisgen, folio, fecha: f.fecha,
+    total: f.total ?? f.total_sisgen, fuente: f.fuente ?? 'BACKUP', archivo: f.archivo, lineas: JSON.parse(f.lineas ?? '[]'),
+    enBlanco: !!f.en_blanco, sinXml: !!f.sin_xml,
+  };
+}
+
+/**
+ * Documentos en blanco (y completos pero sin XML de los últimos 90 días) de una sucursal que aún no se buscan en la carpeta backup / tabla DT
+ * (o que no se encontraron y son de los últimos 3 días: el respaldo del día se sigue escribiendo).
+ */
+export function blancosSinRespaldo(sucursalId, limite = 200) {
+  return getDb().prepare(`
+    SELECT d.tipo_sisgen AS tipoSisgen, d.folio, d.fecha FROM docs_sisgen d
+      LEFT JOIN respaldo_documentos r ON r.rut_emisor = d.rut_emisor AND r.tipo_sisgen = d.tipo_sisgen AND r.folio = d.folio
+     WHERE d.sucursal_id = ? AND d.fecha IS NOT NULL
+       AND (d.en_blanco = 1 OR (d.sin_xml = 1 AND d.fecha >= date('now', '-90 days') AND d.fecha < date('now', 'localtime')))
+       AND (r.folio IS NULL OR (r.encontrado = 0 AND d.fecha >= date('now', '-3 days') AND r.buscado_en < datetime('now', '-1 hour')))
+     ORDER BY d.fecha DESC LIMIT ?`).all(sucursalId, limite).map((x) => ({ ...x }));
+}
+
 export function enviosSii(rut, periodo) {
   const filas = getDb()
     .prepare("SELECT tipo_sii, folio, track_id, estado_envio, estado_sii, detalle_sii FROM envios_sii WHERE rut_emisor = ? AND fecha LIKE ? || '%'")
@@ -534,7 +656,10 @@ export function enviosSii(rut, periodo) {
 export function registradosEnOtroMes(rut, periodo, claves) {
   if (!claves.length) return new Map();
   const st = getDb().prepare(
-    `SELECT periodo FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ? AND periodo <> ? AND en_blanco = 0 LIMIT 1`
+    // Solo cuenta si en ese otro mes está con una fecha de ese mismo mes: un registro guardado en un mes
+    // que no es el de su fecha (p. ej. en las tablas de octubre con fecha 2 de noviembre) no manda.
+    `SELECT periodo FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ? AND periodo <> ? AND en_blanco = 0
+        AND (fecha IS NULL OR substr(fecha, 1, 7) = periodo) LIMIT 1`
   );
   const r = new Map();
   for (const k of claves) {
@@ -543,6 +668,29 @@ export function registradosEnOtroMes(rut, periodo, claves) {
     if (f) r.set(k, f.periodo);
   }
   return r;
+}
+
+/**
+ * Documentos guardados en las tablas de un mes que no es el de su fecha y que también están registrados
+ * en el mes de su fecha: Set de 'tipo-folio' (ese registro es el que vale; esta copia no se cuenta).
+ */
+export function registradosEnSuMes(rut, periodo, docs) {
+  const fuera = docs.filter((d) => d.tipo_sii && d.fecha && d.fecha.slice(0, 7) !== periodo);
+  if (!fuera.length) return new Set();
+  const st = getDb().prepare('SELECT 1 FROM docs_sisgen WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ? AND periodo = ? LIMIT 1');
+  return new Set(fuera.filter((d) => st.get(rut, d.tipo_sii, d.folio, d.fecha.slice(0, 7))).map((d) => `${d.tipo_sii}-${d.folio}`));
+}
+
+/**
+ * Documentos en blanco guardados en las tablas de un mes que no es el de su fecha y que el SII tiene
+ * recibidos en el mes de su fecha: Set de 'tipo-folio' (se cuadran en ese mes, no aquí).
+ */
+export function enBlancoConSiiEnSuMes(rut, periodo, docs) {
+  const fuera = docs.filter((d) => d.en_blanco && d.tipo_sii && d.fecha && d.fecha.slice(0, 7) !== periodo);
+  if (!fuera.length) return new Set();
+  const st = getDb().prepare(`SELECT 1 FROM docs_sii WHERE rut_emisor = ? AND tipo_sii = ? AND folio = ?
+      AND substr(fecha, 1, 7) = ? AND estado IN ('REGISTRADO', 'ACEPTADO', 'REPARO') LIMIT 1`);
+  return new Set(fuera.filter((d) => st.get(rut, d.tipo_sii, d.folio, d.fecha.slice(0, 7))).map((d) => `${d.tipo_sii}-${d.folio}`));
 }
 
 /** Reemplaza los rangos CAF de una sucursal. */

@@ -32,6 +32,7 @@ namespace SisgenAgente
                 try
                 {
                     if (sii.RutNumero == null) { Thread.Sleep(5000); continue; }
+                    sii.RevisarCertificado();
                     var r = portal.Enviar("/consultas/esperar", "{\"certificado\":" + Json.Texto(sii.EstadoCertificado) + "}");
                     if (!r.Ok) { Thread.Sleep(30000); continue; }
                     var datos = JsonLector.Leer(r.Cuerpo) as Dictionary<string, object>;

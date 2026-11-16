@@ -19,3 +19,6 @@ data/
 agente/dist/
 herramientas/
 agente/SisgenAgente.zip
+
+# Llave privada para firmar las actualizaciones del agente
+config/firma-agente.pem

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { pesos, numero, fecha, ESTADO_INFO, descargarCsv } from '../util.js';
+import { urlDocumentoEnBlanco } from './DocumentoEnBlanco.jsx';
 
 const POR_PAGINA = 50;
 
@@ -226,6 +227,15 @@ function Detalle({ d, rut, cerrar }) {
               {d.enBlanco && (
                 <div className="alert alert-dark py-2">
                   <strong>Documento en blanco</strong> — no quedó registrado completo en Sisgen.
+                  {d.respaldo?.encontrado ? (
+                    <div className="mt-1">
+                      <a href={urlDocumentoEnBlanco(rut, d.respaldo.tipoSisgen ?? d.tipoSisgen, d.folio)} target="_blank" rel="noopener">Ver qué llevaba ↗</a>
+                    </div>
+                  ) : (
+                    <div className="mt-1 fw-semibold">
+                      {d.respaldo ? 'Detalle no encontrado en ninguna tabla: eliminar' : 'Buscando su detalle en Sisgen…'}
+                    </div>
+                  )}
                 </div>
               )}
               <table className="table table-sm mb-0">

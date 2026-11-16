@@ -1,7 +1,7 @@
 // Cuadratura completa y resúmenes por razón social / cliente para las pantallas del portal.
 import {
   docsSisgen, docsSii, rangosCaf, xmlOtrosMeses, resumenSii, sincronizacionSii, foliosExternos, huellaDatos,
-  sucursalesConLectura, ultimoFolioUsado, registradosEnOtroMes, enviosSii,
+  sucursalesConLectura, ultimoFolioUsado, registradosEnOtroMes, registradosEnSuMes, enBlancoConSiiEnSuMes, enviosSii, respaldosDocumentos,
 } from '../../db.js';
 import { TIPOS_A_CUADRAR, NOMBRES_SII } from '../sisgen/tipos.js';
 import { alertasVencimiento, marcarFoliosVencidos, marcarDocumentosVencidos } from '../sii/vigenciaCaf.js';
@@ -12,7 +12,10 @@ import { estadoAgente } from '../../agentes.js';
 export function calcularCuadratura(rut, periodo) {
   const sinc = sincronizacionSii(rut, periodo);
   const otrosMeses = xmlOtrosMeses(rut, periodo);
-  const resultado = cuadrar(ajustarOtrosMeses(rut, periodo, docsSisgen(rut, periodo), otrosMeses), docsSii(rut, periodo), {
+  const respaldos = respaldosDocumentos(rut);
+  const docs = ajustarOtrosMeses(rut, periodo, docsSisgen(rut, periodo), otrosMeses)
+    .map((d) => ((d.en_blanco || d.sin_xml) && respaldos.has(`${d.tipo_sisgen}-${d.folio}`) ? { ...d, respaldo: { ...respaldos.get(`${d.tipo_sisgen}-${d.folio}`), tipoSisgen: d.tipo_sisgen } } : d));
+  const resultado = cuadrar(docs, docsSii(rut, periodo), {
     rangos: rangosCaf(rut),
     xmlOtrosMeses: otrosMeses,
     resumenSii: resumenSii(rut, periodo),
@@ -37,13 +40,21 @@ export function calcularCuadratura(rut, periodo) {
  * Documentos regenerados en otro mes (p. ej. una factura de octubre cuyo XML se generó en noviembre):
  *  - registrado "sin XML" en este mes, pero con XML en la carpeta de un mes vecino -> sí tiene XML;
  *  - "en blanco" en este mes (solo hay XML), pero registrado en Sisgen en otro mes -> es de ese
- *    otro mes y no se cuenta aquí.
+ *    otro mes y no se cuenta aquí;
+ *  - guardado en las tablas de este mes con fecha de otro mes, y registrado también en el mes de su
+ *    fecha -> el documento es de ese mes y aquí no se cuenta;
+ *  - "en blanco" aquí con fecha de otro mes, y el SII lo tiene recibido en el mes de su fecha -> se
+ *    cuadra en ese mes (allí aparece como "está en el SII") y aquí no se cuenta.
  */
 export function ajustarOtrosMeses(rut, periodo, docs, otrosMeses) {
   const blancos = docs.filter((d) => d.en_blanco && d.tipo_sii).map((d) => `${d.tipo_sii}-${d.folio}`);
   const deOtroMes = registradosEnOtroMes(rut, periodo, blancos);
+  const enSuMes = registradosEnSuMes(rut, periodo, docs);
+  const blancoConSii = enBlancoConSiiEnSuMes(rut, periodo, docs);
   return docs
+    .filter((d) => !blancoConSii.has(`${d.tipo_sii}-${d.folio}`))
     .filter((d) => !(d.en_blanco && deOtroMes.has(`${d.tipo_sii}-${d.folio}`)))
+    .filter((d) => !(d.fecha && d.fecha.slice(0, 7) !== periodo && enSuMes.has(`${d.tipo_sii}-${d.folio}`)))
     .map((d) => (d.sin_xml && otrosMeses.has(`${d.tipo_sii}-${d.folio}`) ? { ...d, sin_xml: 0 } : d));
 }
 

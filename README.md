@@ -35,13 +35,32 @@ Sin `config/config.local.json` el sistema arranca en **modo demo** con una empre
 | `client/` | Portal web (React + Bootstrap) |
 | `scripts/` | `npm run dbf -- <tabla.dbf>` inspecciona una tabla; `npm run importar` importa ventas |
 
+## Agente Sisgen (sucursales)
+
+Servicio de Windows (C# / .NET 4, `agente/`) que se instala en el servidor de cada sucursal. **Solo lee** Sisgen:
+
+- ventas del mes (F1, F2, CLIDOCTO, CLIPAGOS), XML emitidos, seguimiento de envío (trazadte / trazabol) y CAF;
+- compras: XML de `procesos\DTE\intercambio\Recibidos`;
+- detalle de documentos en blanco (carpeta `backup` de la estación y tabla DT);
+- consultas al SII con el certificado del cliente, que nunca sale del equipo.
+
+Compilar: `agente\compilar.bat` (genera `dist\SisgenAgente.exe` y el instalador `dist\InstalarAgenteSisgen.exe`).
+
+**Actualización en línea:** `node scripts/publicar-agente.js --solo <ids>` firma y publica `dist\SisgenAgente.exe`;
+cada agente lo descarga, verifica la firma (RSA, llave pública en `agente/src/LlavePublica.cs`) y se reinicia.
+Si la versión nueva no se conecta, vuelve sola a la anterior. La llave privada (`config/firma-agente.pem`) no se versiona.
+
+**Cambio de carpeta a distancia:** un archivo `data/agentes/carpeta-<id>.json` (`{"id": "...", "sisgen": "C:\SisGen"}`)
+hace que el agente cambie su carpeta de Sisgen (verifica que sea el mismo RUT) y se reinicie.
+
 ## Pruebas
 
-`npm test`: pruebas del motor de cuadratura.
+`npm test`: pruebas del motor de cuadratura, del agente y de las actualizaciones.
 
 ## Pendientes
 
-- **Fase 1:** autenticación con certificado, descarga del RCV, estado de DTE y envíos, y API de boletas.
-- Confirmar la equivalencia de los tipos `NE`, `BT`, `NC`, `OV` y `FX` (`server/lib/sisgen/tipos.js`).
-- Usuarios y permisos por razón social y sucursal.
-- Agente en las sucursales para reemplazar la extracción por LogMeIn.
+- **Mudanza a un VPS** con dirección propia (p. ej. `portal.sisgenchile.cl`) y HTTPS: el túnel de pruebas
+  (Dev Tunnels) tiene un límite mensual de transferencia.
+- Agente 1.6.11: dirección de respaldo del portal y cambio de dirección a distancia; historiales más livianos.
+- Agentes 1.5.0 (sin actualización en línea): reinstalar.
+- Permisos de técnicos, firma de código del agente y base de datos PostgreSQL para todos los clientes.

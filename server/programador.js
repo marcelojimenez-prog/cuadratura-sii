@@ -13,6 +13,7 @@ import { sincronizarEmpresa } from './lib/sii/sincronizar.js';
 import { clienteRemoto } from './lib/sii/clientes.js';
 import { agenteDisponible } from './lib/sii/remoto.js';
 import { mesesACuadrar } from './lib/sii/vigenciaCaf.js';
+import { fijarConsultaPeriodo } from './correcciones.js';
 
 const HORA_NOCTURNA = 3;
 let ocupado = false;
@@ -41,7 +42,8 @@ const log = (m) => console.log(`[auto ${new Date().toLocaleString('sv-SE')}] ${m
 /** Consulta al SII de una razón social en los periodos indicados (local o vía agente). */
 async function consultarEmpresa(emp, periodos, conCertificadoLocal, { barrido = true } = {}) {
   for (const p of periodos) {
-    if (conCertificadoLocal.has(emp.rut)) {
+    // Con agente conectado se consulta con el certificado del servidor del cliente; el certificado por red, solo si no hay agente
+    if (conCertificadoLocal.has(emp.rut) && !agenteDisponible(emp.rut)) {
       const r = await correr('sincronizar-sii.js', [p, emp.rut, ...(barrido ? [] : ['--rapido'])]);
       log(`SII ${emp.razon_social} ${p}: ${r.codigo === 0 ? 'ok' : `error (código ${r.codigo})`}`);
       if (r.codigo !== 0) console.log(r.salida.split('\n').slice(-8).join('\n'));
@@ -66,6 +68,7 @@ async function consultarSii({ todosLosMeses = false, barrido = true } = {}) {
 }
 
 const MESES_ANTIGUOS_POR_HORA = 12;
+// El Registro de Ventas del SII existe desde mayo de 2017: los meses anteriores no se consultan
 
 /**
  * Meses antiguos (con ventas de Sisgen) que nunca se han consultado al SII: se consultan una vez,
@@ -79,11 +82,21 @@ async function consultarMesesAntiguos() {
     if (!conCertificadoLocal.has(emp.rut) && !agenteDisponible(emp.rut)) continue;
     const pendientes = getDb().prepare(
       `SELECT DISTINCT d.periodo FROM docs_sisgen d
-        WHERE d.rut_emisor = ? AND NOT EXISTS (SELECT 1 FROM sii_sincronizaciones s WHERE s.rut_emisor = d.rut_emisor AND s.periodo = d.periodo)
+        WHERE d.rut_emisor = ? AND d.periodo >= '2017-05' AND NOT EXISTS (SELECT 1 FROM sii_sincronizaciones s WHERE s.rut_emisor = d.rut_emisor AND s.periodo = d.periodo)
         ORDER BY d.periodo DESC LIMIT ?`
     ).all(emp.rut, MESES_ANTIGUOS_POR_HORA).map((r) => r.periodo);
     if (pendientes.length) await consultarEmpresa(emp, pendientes, conCertificadoLocal);
   }
+}
+
+/** Consulta al SII de un solo periodo de una razón social (tras una corrección). */
+export async function consultarPeriodo(rut, p) {
+  const emp = getDb().prepare('SELECT rut, razon_social FROM empresas WHERE rut = ?').get(rut);
+  if (!emp) return;
+  const cfg = cargarConfig();
+  const conCertificadoLocal = new Set(cfg.empresas.filter((e) => e.certificado?.rutaPfx).map((e) => e.rut));
+  log(`Documento corregido en ${emp.razon_social} ${p}: consultando al SII`);
+  await consultarEmpresa(emp, [p], conCertificadoLocal);
 }
 
 /** Consulta inmediata de todos los meses que se cuadran (al conectarse un agente por primera vez). */
@@ -98,7 +111,11 @@ export async function consultarAhora(rut) {
 async function importarPorRed() {
   const cfg = cargarConfig();
   for (const emp of cfg.empresas) {
-    if (!emp.sucursales?.some((s) => s.rutaDatos)) continue;
+    // Solo sucursales sin agente instalado (el script las omite); si todas tienen agente, no se corre
+    const sinAgente = emp.sucursales?.filter((s) => s.rutaDatos && !getDb().prepare(
+      `SELECT 1 FROM agentes a JOIN sucursales x ON x.id = a.sucursal_id WHERE a.activo = 1 AND x.rut_empresa = ? AND x.codigo = ?`
+    ).get(emp.rut, s.codigo)) ?? [];
+    if (!sinAgente.length) continue;
     for (const p of periodosRecientes()) {
       const r = await correr('importar-sisgen.js', [p, emp.rut]);
       log(`Importación ${emp.razonSocial} ${p}: ${r.codigo === 0 ? 'ok' : `error (código ${r.codigo})`}`);
@@ -132,6 +149,7 @@ async function tick() {
 
 /** Inicia las tareas automáticas: primera consulta a los 2 minutos, luego cada 15 minutos. */
 export function iniciarProgramador({ minutos = 15 } = {}) {
+  fijarConsultaPeriodo(consultarPeriodo);
   log(`Tareas automáticas activas: consulta al SII del mes en curso cada ${minutos} min (revisión completa de boletas cada hora); a las ${HORA_NOCTURNA}:00 todos los meses que se cuadran.`);
   setTimeout(tick, 2 * 60 * 1000);
   setInterval(tick, minutos * 60 * 1000);

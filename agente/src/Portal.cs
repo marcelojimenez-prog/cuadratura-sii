@@ -42,6 +42,22 @@ namespace SisgenAgente
 
         public RespuestaPortal Enviar(string ruta, string json, bool comprimir = false)
         {
+            int estado;
+            byte[] cuerpo = Pedir(ruta, json, comprimir, out estado);
+            return new RespuestaPortal { Estado = estado, Cuerpo = Encoding.UTF8.GetString(cuerpo) };
+        }
+
+        /// <summary>Descarga un archivo (la actualización del agente).</summary>
+        public byte[] Descargar(string ruta, string json)
+        {
+            int estado;
+            byte[] cuerpo = Pedir(ruta, json, false, out estado);
+            if (estado < 200 || estado >= 300) throw new Exception("el portal respondió " + estado);
+            return cuerpo;
+        }
+
+        byte[] Pedir(string ruta, string json, bool comprimir, out int estado)
+        {
             var req = (HttpWebRequest)WebRequest.Create(baseUrl + ruta);
             req.Method = "POST";
             req.ContentType = "application/json; charset=utf-8";
@@ -69,8 +85,13 @@ namespace SisgenAgente
                 if (resp == null) throw; // sin conexión: se reintenta en el próximo ciclo
             }
             using (resp)
-            using (var lector = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                return new RespuestaPortal { Estado = (int)resp.StatusCode, Cuerpo = lector.ReadToEnd() };
+            using (var flujo = resp.GetResponseStream())
+            using (var ms = new MemoryStream())
+            {
+                flujo.CopyTo(ms);
+                estado = (int)resp.StatusCode;
+                return ms.ToArray();
+            }
         }
     }
 

@@ -32,12 +32,16 @@ namespace SisgenAgente
             historial = new Historial(c, portal, Path.Combine(Program.Carpeta, "estado"));
             sii = new Sii(c);
             consultas = new ConsultasSii(portal, sii);
+            respaldo = new Respaldo(c, portal);
+            compras = new Compras(c, portal, Path.Combine(Program.Carpeta, "estado"));
+            inventario = new Inventario(c, portal);
+            buscaTablas = new BuscaTablas(c, portal);
         }
 
         public void Iniciar()
         {
             Log.Info("Agente Sisgen " + Program.Version + " iniciado. Sisgen: " + cfg.Sisgen + " · Portal: " + cfg.Portal);
-            Vigilar(cfg.CarpetaDte, "*.xml", true);
+            Vigilar(cfg.CarpetaDte, "*.xml", true, ruta => { lock (xmlAvisados) xmlAvisados.Add(ruta); });
             Vigilar(cfg.CarpetaDatos, "traza*.dbf", false);
             // Certificado local para consultar al SII (nunca sale de este equipo)
             try { sii.CargarCertificado(); } catch (Exception e) { sii.EstadoCertificado = "error: " + e.Message; }
@@ -57,15 +61,15 @@ namespace SisgenAgente
             Log.Info("Agente detenido.");
         }
 
-        void Vigilar(string carpeta, string filtro, bool subcarpetas)
+        void Vigilar(string carpeta, string filtro, bool subcarpetas, Action<string> alCambiar = null)
         {
             try
             {
                 if (!Directory.Exists(carpeta)) { Log.Error("No existe la carpeta " + carpeta); return; }
                 var w = new FileSystemWatcher(carpeta, filtro) { IncludeSubdirectories = subcarpetas, InternalBufferSize = 65536 };
                 w.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size;
-                FileSystemEventHandler h = (s, e) => despertar.Set();
-                w.Created += h; w.Changed += h; w.Renamed += (s, e) => despertar.Set();
+                FileSystemEventHandler h = (s, e) => { if (alCambiar != null) alCambiar(e.FullPath); despertar.Set(); };
+                w.Created += h; w.Changed += h; w.Renamed += (s, e) => { if (alCambiar != null) alCambiar(e.FullPath); despertar.Set(); };
                 w.EnableRaisingEvents = true;
                 vigilantes.Add(w);
             }
@@ -97,6 +101,10 @@ namespace SisgenAgente
             EnviarXml();
             estado.Guardar();
             EnviarVentasMes();
+            try { respaldo.Procesar(); } catch (Exception e) { Log.Error("Respaldo: " + e.Message); }
+            try { compras.Avanzar(); } catch (Exception e) { Log.Error("Compras: " + e.Message); }
+            try { inventario.Avanzar(); } catch (Exception e) { Log.Error("Diagnóstico: " + e.Message); }
+            try { buscaTablas.Recibir(ultimaRespuestaHola); } catch (Exception e) { Log.Error("Diagnóstico tablas: " + e.Message); }
             // Lo último y de a poco: el historial de XML (no retrasa lo que se está emitiendo hoy)
             int h = historial.Avanzar();
             if (h > 0 && (DateTime.Now - ultimoLogHistorial).TotalMinutes >= 5)
@@ -107,6 +115,11 @@ namespace SisgenAgente
         }
 
         readonly Historial historial;
+        readonly Respaldo respaldo;
+        readonly Compras compras;
+        readonly Inventario inventario;
+        readonly BuscaTablas buscaTablas;
+        Dictionary<string, object> ultimaRespuestaHola;
         readonly Sii sii;
         readonly ConsultasSii consultas;
         DateTime ultimoLogHistorial = DateTime.MinValue;
@@ -115,6 +128,8 @@ namespace SisgenAgente
         // Meses que el portal pide cuadrar (según la vigencia de los folios de facturas y notas)
         List<string> mesesPortal = new List<string>();
         readonly Dictionary<string, DateTime> ultimoEnvioMes = new Dictionary<string, DateTime>();
+        // Meses con documentos corregidos que el portal pide reenviar ya
+        readonly List<string> mesesUrgentesPendientes = new List<string>();
 
         /// <summary>
         /// Envía las ventas de cada mes que corresponda: el actual (y el anterior los primeros 10 días)
@@ -127,12 +142,14 @@ namespace SisgenAgente
             var recientes = new List<string> { actual.ToString("yyyy-MM") };
             if (hoy.Day <= 10) recientes.Add(actual.AddMonths(-1).ToString("yyyy-MM"));
             if (ultimoEnvioMes.Count == 0) recientes.Add(actual.AddMonths(-1).ToString("yyyy-MM")); // al iniciar
-            var todos = recientes.Concat(mesesPortal).Distinct().ToList();
+            var urgentes = mesesUrgentesPendientes.ToList();
+            mesesUrgentesPendientes.Clear();
+            var todos = urgentes.Concat(recientes).Concat(mesesPortal).Distinct().ToList();
             foreach (var m in todos)
             {
                 DateTime ultimo;
                 bool enviado = ultimoEnvioMes.TryGetValue(m, out ultimo);
-                double horas = recientes.Contains(m) ? cfg.HorasVentas : 24;
+                double horas = urgentes.Contains(m) ? 0 : recientes.Contains(m) ? cfg.HorasVentas : 24;
                 if (enviado && (DateTime.Now - ultimo).TotalHours < horas) continue;
                 var mes = DateTime.ParseExact(m + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture);
                 var inicio = DateTime.Now;
@@ -196,6 +213,15 @@ namespace SisgenAgente
             {
                 var datos = JsonLector.Leer(r.Cuerpo) as Dictionary<string, object>;
                 object m;
+                Actualizador.Confirmar();
+                Actualizador.Revisar(portal, datos);
+                CambioCarpeta.Revisar(cfg, portal, datos);
+                respaldo.Recibir(datos);
+                ultimaRespuestaHola = datos;
+                object u;
+                if (datos != null && datos.TryGetValue("mesesUrgentes", out u) && u is List<object>)
+                    foreach (var x in ((List<object>)u).OfType<string>().Where(x => Regex.IsMatch(x, @"^\d{4}-\d{2}$")))
+                        if (!mesesUrgentesPendientes.Contains(x)) { mesesUrgentesPendientes.Add(x); ultimoEnvioMes.Remove(x); }
                 if (datos != null && datos.TryGetValue("mesesVentas", out m) && m is List<object>)
                     mesesPortal = ((List<object>)m).OfType<string>().Where(x => Regex.IsMatch(x, @"^\d{4}-\d{2}$")).ToList();
             }
@@ -254,11 +280,42 @@ namespace SisgenAgente
         }
 
         // ---------- XML de documentos emitidos ----------
+        // XML avisados por el vigilante (cualquier carpeta de mes: un documento corregido y republicado
+        // queda en la carpeta del mes del documento, no en la del mes en curso)
+        readonly HashSet<string> xmlAvisados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DateTime ultimaRevisionMeses = DateTime.MinValue;
+
         void EnviarXml()
         {
             if (!Directory.Exists(cfg.CarpetaDte)) return;
             var pendientes = new List<FileInfo>();
             DateTime limite = DateTime.Now.AddSeconds(-3);
+            var vistos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> avisados;
+            lock (xmlAvisados) { avisados = xmlAvisados.ToList(); xmlAvisados.Clear(); }
+            foreach (string ruta in avisados)
+            {
+                try
+                {
+                    var f = new FileInfo(ruta);
+                    if (!f.Exists || !Regex.IsMatch(f.Directory.Name, @"^\d{4}$") || !f.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (f.LastWriteTime > limite) { lock (xmlAvisados) xmlAvisados.Add(ruta); continue; } // todavía se está escribiendo
+                    if (!estado.XmlEnviado(f.Name) && vistos.Add(f.FullName)) pendientes.Add(f);
+                }
+                catch { }
+            }
+            // Cada hora, por si el vigilante perdió algún aviso: XML recientes en las carpetas de los meses que se cuadran
+            if ((DateTime.Now - ultimaRevisionMeses).TotalMinutes >= 60)
+            {
+                ultimaRevisionMeses = DateTime.Now;
+                foreach (string m in mesesPortal)
+                {
+                    string carpeta = Path.Combine(cfg.CarpetaDte, m.Substring(2, 2) + m.Substring(5, 2));
+                    if (!Directory.Exists(carpeta)) continue;
+                    foreach (var f in new DirectoryInfo(carpeta).GetFiles("*.xml"))
+                        if (f.LastWriteTime > DateTime.Now.AddDays(-3) && f.LastWriteTime <= limite && !estado.XmlEnviado(f.Name) && vistos.Add(f.FullName)) pendientes.Add(f);
+                }
+            }
             foreach (string mes in MesesAVigilar())
             {
                 string carpeta = Path.Combine(cfg.CarpetaDte, mes);
@@ -267,7 +324,7 @@ namespace SisgenAgente
                 {
                     if (f.LastWriteTime > limite) continue; // todavía se está escribiendo
                     if (string.CompareOrdinal(f.LastWriteTime.ToString("yyyy-MM-dd"), cfg.Desde) < 0) continue;
-                    if (!estado.XmlEnviado(f.Name)) pendientes.Add(f);
+                    if (!estado.XmlEnviado(f.Name) && vistos.Add(f.FullName)) pendientes.Add(f);
                 }
             }
             if (pendientes.Count == 0) return;

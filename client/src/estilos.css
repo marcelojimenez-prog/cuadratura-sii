@@ -217,3 +217,5 @@ a, .btn-link { color: var(--marca); }
 .tabla-rcv td .btn-link:hover { text-decoration: underline; }
 .linea-aviso { color: #a52834; font-size: .95rem; }
 .linea-aviso.gris { color: #6c757d; }
+
+.selector-sucursal { min-width: 12rem; }

@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import fs from 'node:fs';
+import zlib from 'node:zlib';
 import { listarEmpresas } from '../db.js';
 import { calcularCuadratura, estadoEmpresa } from '../lib/cuadratura/resumen.js';
-import { documentoConSucursal, getDb } from '../db.js';
+import { documentoConSucursal, getDb, respaldoDocumento, comprasPeriodo, rutaCompra } from '../db.js';
 import { xmlGuardado } from '../agentes.js';
 
 const datosImpresion = (rut) =>
@@ -32,6 +34,17 @@ r.get('/cuadratura/:rut/:periodo', (req, res) => {
   if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: 'Periodo debe ser YYYY-MM' });
   if (!puedeVer(req.usuario, rut)) return noEncontrado(res);
   res.json(calcularCuadratura(rut, periodo));
+});
+
+/** Lo que llevaba un documento en blanco, según la carpeta backup de Sisgen. */
+r.get('/respaldo/:rut/:tipo/:folio', (req, res) => {
+  const { rut } = req.params;
+  if (!puedeVer(req.usuario, rut)) return noEncontrado(res);
+  const tipo = String(req.params.tipo).toUpperCase(), folio = parseInt(req.params.folio, 10);
+  if (!/^[A-Z]{2}$/.test(tipo) || !Number.isFinite(folio)) return res.status(400).json({ error: 'Documento no válido' });
+  const r = respaldoDocumento(rut, tipo, folio);
+  if (!r) return res.status(404).json({ error: 'No se encontró este documento en la carpeta backup de Sisgen' });
+  res.json(r);
 });
 
 /**
@@ -89,6 +102,40 @@ r.get('/buscar/:rut', (req, res) => {
     hayMas: filas.length > 50,
     archivo: { documentos: total.n, desde: total.desde },
   });
+});
+
+/** Compras del mes: documentos recibidos de proveedores (XML de Correo\Descargas de Sisgen). */
+r.get('/compras/:rut/:periodo', (req, res) => {
+  const { rut, periodo } = req.params;
+  if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: 'Periodo debe ser YYYY-MM' });
+  if (!puedeVer(req.usuario, rut)) return noEncontrado(res);
+  res.json({ rut, periodo, documentos: comprasPeriodo(rut, periodo) });
+});
+
+/** XML o PDF de una compra. GET /api/compra/:rut/:emisor/:tipo/:folio/xml|pdf */
+r.get('/compra/:rut/:emisor/:tipo/:folio/:formato', async (req, res, next) => {
+  try {
+    const { rut, emisor, formato } = req.params;
+    const tipo = Number(req.params.tipo), folio = Number(req.params.folio);
+    if (!/^\d{7,8}-[\dkK]$/.test(rut) || !/^\d{1,8}-[\dkK]$/.test(emisor) || !Number.isInteger(tipo) || !Number.isInteger(folio) || !['xml', 'pdf'].includes(formato)) {
+      return res.status(400).json({ error: 'Parámetros inválidos' });
+    }
+    if (!puedeVer(req.usuario, rut)) return res.status(404).json({ error: 'Documento no encontrado' });
+    const ruta = rutaCompra(rut, emisor.toUpperCase(), tipo, folio);
+    let xmlTexto = null;
+    try { xmlTexto = ruta ? zlib.gunzipSync(fs.readFileSync(ruta)).toString('latin1') : null; } catch { xmlTexto = null; }
+    if (!xmlTexto) return res.status(404).json({ error: 'Documento no encontrado' });
+    const nombre = `${emisor}_T${tipo}F${folio}`;
+    if (formato === 'xml') {
+      res.set('Content-Type', 'application/xml; charset=ISO-8859-1');
+      res.set('Content-Disposition', `attachment; filename="${nombre}.xml"`);
+      return res.send(Buffer.from(xmlTexto, 'latin1'));
+    }
+    const pdf = await prepararDocumento({ formato: 'pdf', tipo, folio, sucursal: 'compras', xmlTexto, extrasBase: {}, mostrarLogo: false });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${nombre}.pdf"`);
+    res.send(pdf);
+  } catch (e) { next(e); }
 });
 
 /**

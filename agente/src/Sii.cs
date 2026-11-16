@@ -34,6 +34,9 @@ namespace SisgenAgente
         readonly object candado = new object();
         public string RutNumero, RutDv;
         public string EstadoCertificado = "sin revisar";
+        // Certificado renovado: se vuelve a revisar la carpeta sin reiniciar el servicio
+        string firmaCarpeta;
+        DateTime ultimaRevisionCert = DateTime.Now, ultimaRecargaCert = DateTime.Now;
 
         public Sii(Config c) { cfg = c; }
 
@@ -53,6 +56,8 @@ namespace SisgenAgente
         /// </summary>
         public bool CargarCertificado()
         {
+            firmaCarpeta = FirmaCarpeta();
+            ultimaRecargaCert = DateTime.Now;
             // Opcional en agente.ini: certificado y clave indicados a mano (si la búsqueda automática no sirve)
             if (!string.IsNullOrEmpty(cfg.Certificado))
             {
@@ -77,6 +82,40 @@ namespace SisgenAgente
                 }
             if (mejor == null) { EstadoCertificado = "no se pudo abrir el certificado (clave no encontrada)"; return false; }
             return Usar(mejor);
+        }
+
+        /// <summary>
+        /// Cada 5 minutos mira si cambió la carpeta del certificado (archivo nuevo, reemplazado o clave nueva);
+        /// si cambió, o si el certificado actual está vencido o no se pudo abrir (cada hora), lo vuelve a cargar.
+        /// Así un certificado renovado se usa sin reiniciar el servicio.
+        /// </summary>
+        public void RevisarCertificado()
+        {
+            if ((DateTime.Now - ultimaRevisionCert).TotalMinutes < 5) return;
+            ultimaRevisionCert = DateTime.Now;
+            lock (candado)
+            {
+                bool valido = cert != null && cert.NotAfter >= DateTime.Now;
+                bool cambio = FirmaCarpeta() != firmaCarpeta;
+                if (!cambio && (valido || (DateTime.Now - ultimaRecargaCert).TotalMinutes < 60)) return;
+                string antes = EstadoCertificado;
+                try { CargarCertificado(); } catch (Exception e) { EstadoCertificado = "error: " + e.Message; }
+                if (EstadoCertificado != antes) Log.Info("Certificado para consultas al SII actualizado: " + EstadoCertificado);
+            }
+        }
+
+        string FirmaCarpeta()
+        {
+            try
+            {
+                var archivos = new List<string>();
+                if (!string.IsNullOrEmpty(cfg.Certificado)) archivos.Add(cfg.Certificado);
+                string dir = Path.Combine(Path.GetDirectoryName(cfg.CarpetaDte), "certificado");
+                if (Directory.Exists(dir)) archivos.AddRange(Directory.GetFiles(dir));
+                return string.Join("|", archivos.Where(File.Exists).OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
+                    .Select(a => { var i = new FileInfo(a); return i.Name + ":" + i.Length + ":" + i.LastWriteTimeUtc.Ticks; }));
+            }
+            catch { return null; }
         }
 
         static X509Certificate2 AbrirPfx(string archivo, string clave)
@@ -176,7 +215,7 @@ namespace SisgenAgente
             lock (candado)
             {
                 if (tokenDte != null && DateTime.Now < tokenDteHasta) return tokenDte;
-                if (cert == null && !CargarCertificado()) throw new Exception("Certificado: " + EstadoCertificado);
+                if ((cert == null || cert.NotAfter < DateTime.Now) && !CargarCertificado()) throw new Exception("Certificado: " + EstadoCertificado);
                 var rs = Soap("CrSeed.jws", "<getSeed></getSeed>");
                 string interno = Desescapar(Etiqueta(rs.Cuerpo, "getSeedReturn") ?? rs.Cuerpo);
                 string semilla = Etiqueta(interno, "SEMILLA");
@@ -197,7 +236,7 @@ namespace SisgenAgente
             lock (candado)
             {
                 if (tokenBol != null && DateTime.Now < tokenBolHasta) return tokenBol;
-                if (cert == null && !CargarCertificado()) throw new Exception("Certificado: " + EstadoCertificado);
+                if ((cert == null || cert.NotAfter < DateTime.Now) && !CargarCertificado()) throw new Exception("Certificado: " + EstadoCertificado);
                 var rs = Http("GET", "https://" + HostApi + "/recursos/v1/boleta.electronica.semilla", null, null, null, null, "application/xml");
                 string semilla = Etiqueta(rs.Cuerpo, "SEMILLA");
                 if (semilla == null) throw new Exception("API boletas: no entregó semilla (HTTP " + rs.Http + ")");
