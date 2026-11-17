@@ -22,3 +22,6 @@ agente/SisgenAgente.zip
 
 # Llave privada para firmar las actualizaciones del agente
 config/firma-agente.pem
+
+# Paquete de datos para el servidor (contiene datos de clientes)
+paquete-vps/

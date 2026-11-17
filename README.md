@@ -35,6 +35,11 @@ Sin `config/config.local.json` el sistema arranca en **modo demo** con una empre
 | `client/` | Portal web (React + Bootstrap) |
 | `scripts/` | `npm run dbf -- <tabla.dbf>` inspecciona una tabla; `npm run importar` importa ventas |
 
+## Instalación en un servidor (VPS)
+
+Ver **[DESPLIEGUE.md](DESPLIEGUE.md)**: Linux o Windows Server, servicio, HTTPS, respaldos y corte desde el
+portal actual. Los datos (base, XML y configuración) se entregan aparte con `node scripts/empaquetar-vps.js`.
+
 ## Agente Sisgen (sucursales)
 
 Servicio de Windows (C# / .NET 4, `agente/`) que se instala en el servidor de cada sucursal. **Solo lee** Sisgen:
