@@ -100,11 +100,14 @@ namespace SisgenAgente
             try { return Directory.GetDirectories(dir); } catch { return new string[0]; }
         }
 
-        public static byte[] AgenteIncluido()
+        public static byte[] AgenteIncluido() { return Recurso("SisgenAgente.exe"); }
+
+        public static byte[] Recurso(string nombre)
         {
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("SisgenAgente.exe"))
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(nombre))
             using (var ms = new MemoryStream())
             {
+                if (s == null) return null;
                 s.CopyTo(ms);
                 return ms.ToArray();
             }
@@ -162,6 +165,16 @@ namespace SisgenAgente
         string llave, portal = Instalador.PortalPorDefecto, conectadoComo;
         Dictionary<string, object> empresa;
 
+        // Folios
+        bool folios;
+        List<string> carpetasFolios = new List<string>();
+        CheckBox chkFolios, chkProduccion;
+        bool produccion;
+        // Avisar cuando queden N folios, por documento (código SII -> N)
+        Dictionary<string, long> avisos = new Dictionary<string, long>();
+        List<Tuple<string, TextBox>> camposAviso;
+        CheckedListBox lstFolios;
+
         // Controles de cada paso
         ComboBox cboCarpeta;
         TextBox txtLlave, txtPortal;
@@ -197,7 +210,7 @@ namespace SisgenAgente
             Controls.Add(cabecera);
             AcceptButton = siguiente;
             cancelar.Click += (s, e) => Close();
-            atras.Click += (s, e) => Mostrar(paso == 3 && actualizar ? 0 : paso - 1);
+            atras.Click += (s, e) => Mostrar(paso == 3 && actualizar ? 0 : paso == 5 && !folios ? 3 : paso - 1);
             siguiente.Click += (s, e) => Avanzar();
             Mostrar(0);
         }
@@ -231,16 +244,19 @@ namespace SisgenAgente
         void Mostrar(int n)
         {
             paso = n;
-            atras.Visible = n > 0 && n < 4;
+            atras.Visible = n > 0 && n < 6;
             siguiente.Enabled = true;
+            siguiente.Text = "Siguiente >";
             cancelar.Text = "Cancelar";
             switch (n)
             {
                 case 0: PasoBienvenida(); break;
                 case 1: PasoCarpeta(); break;
                 case 2: PasoLlave(); break;
-                case 3: PasoConfirmar(); break;
-                case 4: PasoInstalar(); break;
+                case 3: PasoFolios(); break;
+                case 4: PasoAvisos(); break;
+                case 5: PasoConfirmar(); break;
+                case 6: PasoInstalar(); break;
             }
         }
 
@@ -257,6 +273,18 @@ namespace SisgenAgente
                 {
                     if (rbDes.Checked) { Desinstalar(); return false; }
                     actualizar = true;
+                    // Lo que ya está configurado (para el paso de folios)
+                    var ini = LeerIni();
+                    string v;
+                    if (ini.TryGetValue("sisgen", out v) && v.Length > 0)
+                        candidato = new Candidato { Raiz = v.TrimEnd('\\'), Datos = ini.TryGetValue("datos", out v) && v.Length > 0 ? v : Path.Combine(ini["sisgen"].TrimEnd('\\'), "datos") };
+                    folios = ini.TryGetValue("folios", out v) && v.Equals("si", StringComparison.OrdinalIgnoreCase);
+                    produccion = ini.TryGetValue("foliosProduccion", out v) && v.Equals("si", StringComparison.OrdinalIgnoreCase);
+                    if (ini.TryGetValue("avisoFolios", out v))
+                        foreach (var par in v.Split(';')) { var p = par.Split(':'); long n; if (p.Length == 2 && long.TryParse(p[1], out n)) avisos[p[0].Trim()] = n; }
+                    if (ini.TryGetValue("foliosSisgen", out v)) carpetasFolios = v.Split(';').Select(x => x.Trim().TrimEnd('\\')).Where(x => x.Length > 0).ToList();
+                    llave = ini.TryGetValue("llave", out v) ? v : null;
+                    if (candidato == null) { Aviso("No se pudo leer la carpeta de Sisgen de la configuración actual (agente.ini)."); return false; }
                     return true;
                 });
                 return;
@@ -265,7 +293,8 @@ namespace SisgenAgente
                   Texto("Este asistente instala el Agente Sisgen como servicio de Windows. Desde ese momento, cada documento " +
                         "que emita esta sucursal se envía al Portal Sisgen junto con su estado en el SII.", 60),
                   Texto("El agente solo LEE la información de Sisgen: no modifica nada ni interfiere con DTESERVICE.", 40),
-                  Texto("Necesitas la llave de instalación que se genera en el portal (ficha del cliente → \"Instalar agente en un servidor nuevo\").", 44));
+                  Texto("Necesitas la llave de instalación que se genera en el portal (ficha del cliente → \"Instalar agente en un servidor nuevo\"). " +
+                        "Si solo vas a usar los avisos y la carga de folios, no se necesita llave.", 60));
             siguiente.Text = "Siguiente >";
             siguiente.Tag = null;
         }
@@ -333,7 +362,7 @@ namespace SisgenAgente
             txtPortal = new TextBox { Width = 570, Text = portal };
             lblEstado = Texto("", 46);
             Poner(Titulo("Llave de instalación"),
-                  Texto("Pega la llave que generaste en el portal (empieza con sga_).", 24),
+                  Texto("Pega la llave que generaste en el portal (empieza con sga_). Déjala vacía si solo usarás folios.", 24),
                   txtLlave,
                   Texto("Dirección del portal (normalmente no hay que cambiarla):", 22),
                   txtPortal, lblEstado);
@@ -342,6 +371,7 @@ namespace SisgenAgente
             {
                 llave = txtLlave.Text.Trim();
                 portal = txtPortal.Text.Trim().TrimEnd('/');
+                if (llave.Length == 0) { conectadoComo = null; return true; } // solo folios (se exige activarlos en el paso siguiente)
                 if (!llave.StartsWith("sga_")) { Aviso("La llave debe empezar con sga_. Cópiala completa desde el portal."); return false; }
                 lblEstado.ForeColor = Gris;
                 lblEstado.Text = "Comprobando la conexión con el portal…";
@@ -370,14 +400,97 @@ namespace SisgenAgente
             });
         }
 
+        void PasoFolios()
+        {
+            chkFolios = new CheckBox { Text = "Avisar cuando queden pocos folios y cargarlos desde el SII", Width = 560, Checked = folios || string.IsNullOrEmpty(llave) };
+            lstFolios = new CheckedListBox { Width = 570, Height = 96, CheckOnClick = true };
+            // La carpeta elegida, marcada; las demás instalaciones de Sisgen del equipo, para marcar si este servidor atiende varias
+            var raices = new List<string> { candidato.Raiz };
+            foreach (var c in Instalador.CarpetasSisgen()) if (!raices.Any(r => r.Equals(c.Raiz, StringComparison.OrdinalIgnoreCase))) raices.Add(c.Raiz);
+            foreach (var r in raices) lstFolios.Items.Add(r, r.Equals(candidato.Raiz, StringComparison.OrdinalIgnoreCase) || carpetasFolios.Contains(r));
+            chkProduccion = new CheckBox { Text = "Pedir folios REALES al SII (producción). Sin marcar: solo certificación (pruebas).", Width = 570, Checked = produccion, ForeColor = Color.Firebrick };
+            lstFolios.Height = 76;
+            lstFolios.Enabled = chkProduccion.Enabled = chkFolios.Checked;
+            chkFolios.CheckedChanged += (s, e) => lstFolios.Enabled = chkProduccion.Enabled = chkFolios.Checked;
+            Poner(Titulo("Folios"),
+                  Texto("El agente revisa cuántos folios quedan. Cuando quedan pocos, aparece un aviso en los equipos para cargar más; " +
+                        "si se acaba un rango y hay otro cargado, lo asigna solo.", 44),
+                  chkFolios,
+                  Texto("Carpetas de Sisgen que atiende este servidor:", 22),
+                  lstFolios,
+                  chkProduccion);
+            siguiente.Tag = new Func<bool>(() =>
+            {
+                folios = chkFolios.Checked;
+                produccion = folios && chkProduccion.Checked;
+                if (produccion && MessageBox.Show(this, "Se pedirán folios REALES al SII con el certificado de esta sucursal, y se cargarán en Sisgen.\n\n¿Continuar?",
+                        "Folios en producción", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return false;
+                carpetasFolios = lstFolios.CheckedItems.Cast<string>().ToList();
+                if (string.IsNullOrEmpty(llave) && !folios) { Aviso("Sin llave del portal, el agente solo puede usarse para folios: activa los folios o vuelve y pega la llave."); return false; }
+                if (folios && carpetasFolios.Count == 0) { Aviso("Marca al menos una carpeta de Sisgen."); return false; }
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Por cada documento que usa este Sisgen: cuántos folios quedan hoy, cuántos se usan al día y desde cuántos
+        /// avisar. La sugerencia es lo que se usa en una semana (o el 20 % del último rango si no hay ventas recientes).
+        /// </summary>
+        void PasoAvisos()
+        {
+            List<EstadoFolio> estados = new List<EstadoFolio>();
+            Cursor = Cursors.WaitCursor;
+            try { estados = Folios.Calcular(candidato.Datos, DateTime.Today); } catch { }
+            Cursor = Cursors.Default;
+            var tabla = new TableLayoutPanel { ColumnCount = 3, AutoSize = true, Width = 570, CellBorderStyle = TableLayoutPanelCellBorderStyle.None };
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+            Func<string, bool, Label> celda = (t, neg) => new Label { Text = t, AutoSize = true, Margin = new Padding(0, 6, 0, 2), ForeColor = neg ? Negro : Gris,
+                                                                     Font = neg ? new Font("Segoe UI Semibold", 9.5f) : Font };
+            tabla.Controls.Add(celda("Documento", true)); tabla.Controls.Add(celda("Hoy", true)); tabla.Controls.Add(celda("Avisar con", true));
+            camposAviso = new List<Tuple<string, TextBox>>();
+            foreach (var e in estados)
+            {
+                long actual;
+                var num = new TextBox { Width = 90, TextAlign = HorizontalAlignment.Right, Margin = new Padding(0, 3, 0, 0), MaxLength = 7,
+                                        Text = avisos.TryGetValue(e.Tipo.Sii, out actual) ? actual.ToString() : "" };
+                num.KeyPress += (s, ev) => { if (!char.IsDigit(ev.KeyChar) && !char.IsControl(ev.KeyChar)) ev.Handled = true; };
+                tabla.Controls.Add(celda(e.Tipo.Nombre, false));
+                tabla.Controls.Add(celda("quedan " + e.Quedan.ToString("N0") + (e.EsperaHasta > 0 ? " + rango en espera" : ""), false));
+                tabla.Controls.Add(num);
+                camposAviso.Add(Tuple.Create(e.Tipo.Sii, num));
+            }
+            var marco = new Panel { Width = 575, Height = 190, AutoScroll = true };
+            marco.Controls.Add(tabla);
+            Poner(Titulo("Avisos por documento"),
+                  Texto(estados.Count == 0 ? "No se pudo leer el estado de folios de esta carpeta; se usará el aviso normal (20 % del rango)."
+                                           : "Escribe con cuántos folios restantes avisar en cada documento (con la cuarta parte se considera crítico). " +
+                                             "Si lo dejas en blanco, avisa con el 20 % del rango.", 40),
+                  marco);
+            siguiente.Tag = new Func<bool>(() =>
+            {
+                avisos = new Dictionary<string, long>();
+                foreach (var x in camposAviso)
+                {
+                    long n;
+                    if (long.TryParse(x.Item2.Text.Trim(), out n) && n > 0) avisos[x.Item1] = n;
+                }
+                return true;
+            });
+        }
+
+        string TextoAvisos() { return string.Join(";", avisos.Select(kv => kv.Key + ":" + kv.Value)); }
+
         void PasoConfirmar()
         {
             Poner(Titulo("Listo para instalar"),
                   Texto(actualizar ? "Se actualizará el Agente Sisgen manteniendo su configuración." :
-                        "Conectado al portal como: " + conectadoComo, 26),
+                        conectadoComo != null ? "Conectado al portal como: " + conectadoComo : "Sin portal: solo folios.", 26),
                   Texto("Carpeta de Sisgen:  " + (candidato != null ? candidato.ToString() : "(la ya configurada)"), 24),
+                  Texto("Folios:  " + (folios ? "sí, en " + string.Join(", ", carpetasFolios) + (produccion ? "  ·  REALES (producción)" : "  ·  solo certificación") : "no"), 24),
                   Texto("Se instalará en:  " + Instalador.Destino, 24),
-                  Texto("El servicio \"Agente Sisgen (Portal)\" arrancará solo cada vez que se encienda el equipo.", 40));
+                  Texto("El servicio \"Agente Sisgen\" arrancará solo cada vez que se encienda el equipo.", 40));
             siguiente.Text = "Instalar";
             siguiente.Tag = null;
         }
@@ -399,8 +512,10 @@ namespace SisgenAgente
                     cancelar.Enabled = true;
                     cancelar.Text = "Cerrar";
                     ((Label)cuerpo.Controls[0]).Text = ok ? "Instalación terminada" : "La instalación no se completó";
-                    if (ok) Linea("\r\nListo. En el portal, esta sucursal aparecerá como \"Agente en línea\".\r\n" +
+                    if (ok && !string.IsNullOrEmpty(llave)) Linea("\r\nListo. En el portal, esta sucursal aparecerá como \"Agente en línea\".\r\n" +
                                   "Los primeros minutos el agente envía las ventas del mes anterior y del actual.");
+                    if (ok && folios) Linea("\r\nAviso de folios: en los demás equipos, abre una vez AvisoFolios.exe desde la carpeta " +
+                                  "procesos\\folios\\agente de Sisgen (por la red) y quedará activo al iniciar sesión.");
                 }));
             }) { IsBackground = true };
             hilo.Start();
@@ -418,9 +533,57 @@ namespace SisgenAgente
             if (!actualizar || !File.Exists(ini))
             {
                 Linea("Guardando la configuración…");
-                File.WriteAllText(ini, "# Configuración del Agente Sisgen (creada por el instalador)\r\n" +
-                    "portal=" + portal + "\r\nllave=" + llave + "\r\nsisgen=" + candidato.Raiz + "\r\ndatos=" + candidato.Datos + "\r\n",
-                    new UTF8Encoding(false));
+                string texto = "# Configuración del Agente Sisgen (creada por el instalador)\r\n";
+                if (!string.IsNullOrEmpty(llave)) texto += "portal=" + portal + "\r\nllave=" + llave + "\r\n";
+                texto += "sisgen=" + candidato.Raiz + "\r\ndatos=" + candidato.Datos + "\r\n";
+                if (folios) texto += "folios=si\r\nfoliosSisgen=" + string.Join(";", carpetasFolios) + "\r\n";
+                if (folios && avisos.Count > 0) texto += "avisoFolios=" + TextoAvisos() + "\r\n";
+                if (produccion) texto += "foliosProduccion=si\r\n";
+                File.WriteAllText(ini, texto, new UTF8Encoding(false));
+            }
+            else
+            {
+                // Actualización: se mantiene todo y solo se reemplazan las líneas de folios
+                Linea("Actualizando la configuración de folios…");
+                var claves = new[] { "folios", "foliosSisgen", "foliosProduccion", "avisoFolios" };
+                var lineas = File.ReadAllLines(ini).Where(l =>
+                {
+                    int i = l.IndexOf('=');
+                    return i <= 0 || !claves.Contains(l.Substring(0, i).Trim(), StringComparer.OrdinalIgnoreCase);
+                }).ToList();
+                if (folios)
+                {
+                    lineas.Add("folios=si");
+                    lineas.Add("foliosSisgen=" + string.Join(";", carpetasFolios));
+                    if (avisos.Count > 0) lineas.Add("avisoFolios=" + TextoAvisos());
+                    if (produccion) lineas.Add("foliosProduccion=si");
+                }
+                File.WriteAllLines(ini, lineas, new UTF8Encoding(false));
+            }
+            // Aviso de folios: en cada carpeta de Sisgen (los equipos lo abren desde ahí) y en este servidor al iniciar sesión
+            var avisoBytes = Instalador.Recurso("AvisoFolios.exe");
+            var avisoIni = Path.Combine(Instalador.Destino, "agente.ini");
+            var carpetasAviso = File.ReadAllLines(avisoIni).Select(l => l.Trim())
+                .Where(l => l.StartsWith("foliosSisgen=", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(l => l.Substring(13).Split(';')).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+            bool conFolios = File.ReadAllLines(avisoIni).Any(l => l.Trim().Equals("folios=si", StringComparison.OrdinalIgnoreCase));
+            if (conFolios && avisoBytes != null)
+            {
+                Linea("Copiando el aviso de folios…");
+                foreach (var c in carpetasAviso)
+                {
+                    string d = Path.Combine(c, "procesos", "folios", "agente");
+                    try { Directory.CreateDirectory(d); File.WriteAllBytes(Path.Combine(d, "AvisoFolios.exe"), avisoBytes); Linea("   " + d); }
+                    catch (Exception e) { Linea("   No se pudo copiar en " + d + ": " + e.Message); }
+                }
+                string avisoLocal = Path.Combine(Instalador.Destino, "AvisoFolios.exe");
+                foreach (var p in Process.GetProcessesByName("AvisoFolios")) try { p.Kill(); p.WaitForExit(3000); } catch { }
+                File.WriteAllBytes(avisoLocal, avisoBytes);
+                File.WriteAllLines(Path.Combine(Instalador.Destino, "avisofolios.ini"), carpetasAviso.Select(c => "sisgen=" + c), new UTF8Encoding(false));
+                using (var run = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
+                    run.SetValue("AvisoFoliosSisgen", "\"" + avisoLocal + "\"");
+                // Se abre ya para el usuario actual (sin permisos de administrador)
+                try { Process.Start("explorer.exe", "\"" + avisoLocal + "\""); } catch { }
             }
             if (!Instalador.Instalado())
             {
@@ -447,6 +610,8 @@ namespace SisgenAgente
             {
                 Instalador.DetenerServicio();
                 Instalador.Sc("delete " + Instalador.Servicio);
+                try { using (var run = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)) if (run != null) run.DeleteValue("AvisoFoliosSisgen", false); } catch { }
+                foreach (var p in Process.GetProcessesByName("AvisoFolios")) try { p.Kill(); } catch { }
                 Thread.Sleep(1500);
                 try { Directory.Delete(Instalador.Destino, true); } catch { }
                 MessageBox.Show(this, "El Agente Sisgen fue desinstalado.", "Listo", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -455,12 +620,28 @@ namespace SisgenAgente
             catch (Exception e) { Aviso("No se pudo desinstalar: " + e.Message); }
         }
 
+        static Dictionary<string, string> LeerIni()
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            string ruta = Path.Combine(Instalador.Destino, "agente.ini");
+            if (!File.Exists(ruta)) return d;
+            foreach (var l in File.ReadAllLines(ruta))
+            {
+                string t = l.Trim();
+                if (t.StartsWith("#") || t.StartsWith(";")) continue;
+                int i = t.IndexOf('=');
+                if (i > 0) d[t.Substring(0, i).Trim()] = t.Substring(i + 1).Trim();
+            }
+            return d;
+        }
+
         void Avanzar()
         {
             var validar = siguiente.Tag as Func<bool>;
             if (validar != null && !validar()) return;
             // Al actualizar se saltan carpeta y llave (se mantiene agente.ini)
-            int siguientePaso = paso == 0 && actualizar ? 3 : paso + 1;
+            // Al actualizar se saltan carpeta y llave, pero se puede revisar/activar folios
+            int siguientePaso = paso == 0 && actualizar ? 3 : paso == 3 && !folios ? 5 : paso + 1;
             Mostrar(siguientePaso);
         }
 

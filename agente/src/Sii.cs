@@ -63,6 +63,7 @@ namespace SisgenAgente
             {
                 var c = AbrirPfx(cfg.Certificado, cfg.ClaveCertificado ?? "");
                 if (c == null) { EstadoCertificado = "no se pudo abrir el certificado indicado en agente.ini"; return false; }
+                archivoCert = cfg.Certificado; claveCert = cfg.ClaveCertificado ?? "";
                 return Usar(c);
             }
             string dir = Path.Combine(Path.GetDirectoryName(cfg.CarpetaDte), "certificado");
@@ -77,7 +78,7 @@ namespace SisgenAgente
                 {
                     var c = AbrirPfx(archivo, clave);
                     if (c == null) continue;
-                    if (mejor == null || c.NotAfter > mejor.NotAfter) mejor = c;
+                    if (mejor == null || c.NotAfter > mejor.NotAfter) { mejor = c; archivoCert = archivo; claveCert = clave; }
                     break;
                 }
             if (mejor == null) { EstadoCertificado = "no se pudo abrir el certificado (clave no encontrada)"; return false; }
@@ -116,6 +117,25 @@ namespace SisgenAgente
                     .Select(a => { var i = new FileInfo(a); return i.Name + ":" + i.Length + ":" + i.LastWriteTimeUtc.Ticks; }));
             }
             catch { return null; }
+        }
+
+        // Archivo y clave del certificado elegido (solo en memoria; nunca se registran ni envían)
+        string archivoCert, claveCert;
+
+        /// <summary>
+        /// Certificado para autenticarse por TLS (páginas web del SII, p. ej. timbraje). Se abre en el almacén
+        /// que corresponde a quien ejecuta: como servicio, el del equipo; en una ventana, el del usuario.
+        /// </summary>
+        public X509Certificate2 CertificadoTls()
+        {
+            lock (candado)
+            {
+                if ((cert == null || cert.NotAfter < DateTime.Now) && !CargarCertificado()) throw new Exception("Certificado: " + EstadoCertificado);
+                if (archivoCert == null) return cert;
+                var flags = Environment.UserInteractive ? X509KeyStorageFlags.UserKeySet : X509KeyStorageFlags.MachineKeySet;
+                try { return new X509Certificate2(archivoCert, claveCert, flags); }
+                catch (CryptographicException) { return cert; }
+            }
         }
 
         static X509Certificate2 AbrirPfx(string archivo, string clave)

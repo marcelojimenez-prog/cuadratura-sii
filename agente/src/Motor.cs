@@ -36,7 +36,10 @@ namespace SisgenAgente
             compras = new Compras(c, portal, Path.Combine(Program.Carpeta, "estado"));
             inventario = new Inventario(c, portal);
             buscaTablas = new BuscaTablas(c, portal);
+            if (c.Folios) motoresFolios = c.CarpetasFolios.Select(x => new MotorFolios(x)).ToList();
         }
+
+        readonly List<MotorFolios> motoresFolios = new List<MotorFolios>();
 
         public void Iniciar()
         {
@@ -105,6 +108,8 @@ namespace SisgenAgente
             try { compras.Avanzar(); } catch (Exception e) { Log.Error("Compras: " + e.Message); }
             try { inventario.Avanzar(); } catch (Exception e) { Log.Error("Diagnóstico: " + e.Message); }
             try { buscaTablas.Recibir(ultimaRespuestaHola); } catch (Exception e) { Log.Error("Diagnóstico tablas: " + e.Message); }
+            // Folios: aislado, si falla no afecta lo demás
+            foreach (var mf in motoresFolios) try { mf.Revisar(); } catch (Exception e) { Log.Error("Folios: " + e.Message); }
             // Lo último y de a poco: el historial de XML (no retrasa lo que se está emitiendo hoy)
             int h = historial.Avanzar();
             if (h > 0 && (DateTime.Now - ultimoLogHistorial).TotalMinutes >= 5)

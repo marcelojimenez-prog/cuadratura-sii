@@ -15,10 +15,17 @@ rem 1) El servicio
   "%~dp0src\*.cs"
 if errorlevel 1 exit /b 1
 
-rem 2) El instalador (un solo archivo que lleva el servicio adentro)
+rem 2) El aviso de folios (ventana en cada equipo)
+"%CSC%" /nologo /target:winexe /platform:anycpu /optimize+ /out:"%~dp0dist\AvisoFolios.exe" ^
+  /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll ^
+  "%~dp0aviso\*.cs"
+if errorlevel 1 exit /b 1
+
+rem 3) El instalador (un solo archivo que lleva el servicio y el aviso adentro)
 "%CSC%" /nologo /target:winexe /platform:anycpu /optimize+ /main:SisgenAgente.Instalador ^
   /out:"%~dp0dist\InstalarAgenteSisgen.exe" /win32manifest:"%~dp0instalador\app.manifest" ^
   /resource:"%~dp0dist\SisgenAgente.exe",SisgenAgente.exe ^
+  /resource:"%~dp0dist\AvisoFolios.exe",AvisoFolios.exe ^
   /resource:"%~dp0..\client\public\logo-sisgen.png",logo.png ^
   /reference:System.ServiceProcess.dll /reference:System.Core.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll ^
   "%~dp0src\*.cs" "%~dp0instalador\*.cs"
