@@ -17,6 +17,7 @@ data/
 
 # Agente compilado y archivos de prueba
 agente/dist/
+agente/pruebas/bin/
 herramientas/
 agente/SisgenAgente.zip
 

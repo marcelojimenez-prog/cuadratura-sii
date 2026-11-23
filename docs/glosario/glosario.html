@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Glosario del código Sisgen</title>
+<style>
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+:root { --tinta:#1b2330; --gris:#5a6676; --linea:#d8dee6; --acento:#1f5fa8; --suave:#eef3f9; --mono:Consolas,"Cascadia Mono",monospace; }
+* { box-sizing:border-box; }
+body { font-family:"Segoe UI",Calibri,Arial,sans-serif; color:var(--tinta); font-size:10.2pt; line-height:1.45; margin:0; }
+h1 { font-size:24pt; margin:0 0 6px; color:var(--acento); }
+h2 { font-size:15pt; margin:0 0 4px; color:var(--acento); border-bottom:2px solid var(--acento); padding-bottom:3px; page-break-after:avoid; }
+h3 { font-size:11.5pt; margin:16px 0 4px; page-break-after:avoid; }
+h3 .arch { font-family:var(--mono); font-size:9pt; color:var(--gris); font-weight:normal; }
+p { margin:0 0 7px; }
+.parte { page-break-before:always; }
+.parte > .intro { color:var(--gris); margin-bottom:10px; }
+.etq { font-size:8pt; letter-spacing:.08em; text-transform:uppercase; color:var(--gris); }
+.portada { height:250mm; display:flex; flex-direction:column; justify-content:center; }
+.portada .sub { font-size:13pt; color:var(--gris); max-width:150mm; }
+.portada .meta { margin-top:30px; font-size:10pt; color:var(--gris); }
+table { width:100%; border-collapse:collapse; margin:4px 0 8px; }
+td, th { border-bottom:1px solid var(--linea); padding:4px 6px; vertical-align:top; text-align:left; }
+th { font-size:8.5pt; color:var(--gris); font-weight:600; }
+td.f { width:34%; font-family:var(--mono); font-size:8.6pt; color:var(--acento); word-break:break-word; }
+td.f small { display:block; color:var(--gris); font-size:7.6pt; }
+tr { page-break-inside:avoid; }
+code { font-family:var(--mono); font-size:8.8pt; background:var(--suave); padding:0 3px; border-radius:2px; }
+.caja { background:var(--suave); border-left:3px solid var(--acento); padding:8px 10px; margin:8px 0 10px; page-break-inside:avoid; }
+.mapa td:first-child { width:30%; font-weight:600; }
+.indice ol { margin:0; padding-left:18px; }
+.indice li { margin:2px 0; }
+.dos { columns:2; column-gap:18px; }
+.dos div { break-inside:avoid; margin-bottom:6px; }
+.dos b { font-family:var(--mono); color:var(--acento); }
+</style></head><body>
+
+<section class="portada">
+  <div class="etq">Documentación interna · Sisgen Chile</div>
+  <h1>Glosario del código</h1>
+  <p class="sub">Portal de cuadratura, Agente Sisgen y módulo de folios. Cada función explicada en palabras simples, dividida por módulos.</p>
+  <div class="meta">Proyecto: C:\CuadraturaSII · Agente versión 1.7.8 · 23 de noviembre de 2026</div>
+</section>
+
+<section class="parte indice">
+  <h2>Contenido</h2>
+  <ol>
+    <li>Cómo leer este glosario</li>
+    <li>Palabras y conceptos que se repiten</li>
+    <li>Mapa del proyecto</li>
+    <li>Parte A · Agente Sisgen (servidor del cliente)
+      <ol type="a">
+        <li>Arranque, configuración y registro</li><li>Ciclo principal</li><li>Lectura de tablas de Sisgen</li>
+        <li>Comunicación con el portal</li><li>Cuadratura: ventas, XML, seguimiento e historial</li>
+        <li>Compras y documentos en blanco</li><li>Consultas al SII con el certificado</li>
+        <li>Diagnóstico, cambio de carpeta y actualización</li>
+        <li>Folios: estado, motor, pedido al SII y carga</li><li>Aviso de folios en cada equipo</li><li>Instalador</li>
+      </ol></li>
+    <li>Parte B · Servidor del portal
+      <ol type="a">
+        <li>Arranque, configuración y base de datos</li><li>Usuarios, claves y sesiones</li>
+        <li>Recepción de lo que envían los agentes</li><li>Motor de cuadratura y resúmenes</li>
+        <li>Conexión con el SII</li><li>Lectura de Sisgen por red</li><li>XML y PDF de documentos</li>
+        <li>Tareas automáticas</li><li>Direcciones de la API (rutas)</li>
+      </ol></li>
+    <li>Parte C · Pantallas del portal</li>
+    <li>Parte D · Scripts de administración</li>
+  </ol>
+</section>
+
+<section class="parte">
+  <h2>1 · Cómo leer este glosario</h2>
+  <p>El proyecto tiene tres programas que trabajan juntos:</p>
+  <table class="mapa">
+    <tr><td>Agente Sisgen</td><td>Programa en C# que se instala como servicio de Windows en el <b>servidor de cada cliente</b>. Lee las tablas de Sisgen, envía la información al portal y, desde la 1.7.0, maneja los folios. Carpeta <code>agente\</code>.</td></tr>
+    <tr><td>Servidor del portal</td><td>Programa en JavaScript (Node.js) que corre en el servidor de Sisgen. Recibe lo que mandan los agentes, consulta al SII, hace la cuadratura y guarda todo en la base de datos. Carpeta <code>server\</code>.</td></tr>
+    <tr><td>Pantallas del portal</td><td>Lo que ven los usuarios en el navegador (React). Carpeta <code>client\</code>.</td></tr>
+  </table>
+  <p>Cada función aparece en una fila con su <b>nombre</b> y, debajo, el <b>archivo:línea</b> donde está. A la derecha, qué hace y cuándo se usa. Las funciones muy pequeñas que solo dan formato (por ejemplo, poner puntos de miles) se agrupan en una sola fila.</p>
+  <div class="caja"><b>Función</b> = un bloque de código con nombre que hace una tarea. Se “llama” escribiendo su nombre, por ejemplo <code>Revisar()</code>. <b>Clase</b> = un grupo de funciones y datos que trabajan juntos, como un departamento: la clase <code>MotorFolios</code> agrupa todo lo que hace el encargado de folios.</div>
+  <p>Las pruebas automáticas (<code>server\test\</code>) no se incluyen: son programas que revisan que las funciones respondan lo esperado y se ejecutan con <code>npm test</code>.</p>
+
+  <h2 style="margin-top:18px">2 · Palabras y conceptos que se repiten</h2>
+  <div class="dos">
+    <div><b>if / else</b> — “si pasa esto… si no…”.</div>
+    <div><b>foreach / for</b> — repetir lo mismo para cada elemento de una lista.</div>
+    <div><b>return</b> — termina la función y entrega la respuesta.</div>
+    <div><b>continue</b> — salta al siguiente elemento de la lista.</div>
+    <div><b>try / catch</b> — intenta algo; si falla, lo atrapa y sigue sin caerse.</div>
+    <div><b>throw / Exception</b> — detener la tarea con un mensaje de error.</div>
+    <div><b>null</b> — “nada”, sin valor.</div>
+    <div><b>lock / candado</b> — “uno a la vez”: dos tareas no tocan lo mismo al mismo tiempo.</div>
+    <div><b>Thread / hilo</b> — una tarea que corre en paralelo con otras.</div>
+    <div><b>Timer / temporizador</b> — ejecuta algo cada cierto tiempo.</div>
+    <div><b>FileSystemWatcher</b> — vigilante que avisa apenas cambia un archivo.</div>
+    <div><b>Log</b> — registro del agente: un archivo con lo que pasó y cuándo.</div>
+    <div><b>async / await</b> — esperar una respuesta (del SII, de la red) sin congelar el programa.</div>
+    <div><b>export</b> — la función se puede usar desde otros archivos.</div>
+    <div><b>DBF / CDX</b> — tablas de Visual FoxPro (Sisgen) y su índice.</div>
+    <div><b>Registro / campo</b> — fila / columna de una tabla.</div>
+    <div><b>XML</b> — archivo de texto con etiquetas; así son los DTE y los CAF.</div>
+    <div><b>CAF</b> — archivo del SII que autoriza un rango de folios.</div>
+    <div><b>Certificado (.pfx)</b> — firma digital de la persona autorizada ante el SII.</div>
+    <div><b>Semilla y token</b> — el SII entrega una semilla, se firma con el certificado y se cambia por un token (pase temporal).</div>
+    <div><b>API / ruta</b> — dirección a la que un programa le pide algo a otro (por ejemplo <code>/api/agente/hola</code>).</div>
+    <div><b>JSON</b> — formato de texto para enviar datos entre programas.</div>
+    <div><b>gzip / base64</b> — comprimir un archivo y convertirlo a texto para enviarlo.</div>
+    <div><b>RCV</b> — Registro de Compras y Ventas del SII.</div>
+    <div><b>Traza</b> — seguimiento de envío al SII que guarda DTESERVICE (trazadte / trazabol).</div>
+    <div><b>Periodo</b> — un mes, escrito <code>2026-11</code>.</div>
+    <div><b>Llave del agente</b> — clave que empieza con <code>sga_</code> y autoriza a un agente ante el portal.</div>
+    <div><b>Hash</b> — huella de un texto: sirve para comparar sin guardar el original.</div>
+  </div>
+</section>
+
+<section class="parte">
+  <h2>3 · Mapa del proyecto</h2>
+  <p class="intro">Cómo viaja la información, de punta a punta.</p>
+  <table class="mapa">
+    <tr><td>1. En la sucursal</td><td>Sisgen emite documentos y deja ventas en sus tablas DBF, XML en <code>procesos\DTE</code> y seguimiento en trazadte / trazabol.</td></tr>
+    <tr><td>2. El agente lee</td><td>Cada 30 segundos lee lo nuevo (solo lectura, salvo folios) y lo envía al portal con su llave.</td></tr>
+    <tr><td>3. El portal guarda</td><td>Recibe y guarda en su base de datos los documentos de Sisgen.</td></tr>
+    <tr><td>4. El portal consulta al SII</td><td>Cada hora (y completo cada noche) pide al SII el Registro de Ventas y el estado de las boletas. Si el cliente tiene agente, la consulta la hace el agente con el certificado del cliente, que nunca sale de su servidor.</td></tr>
+    <tr><td>5. Cuadratura</td><td>Cruza Sisgen contra SII documento por documento y genera alertas: falta en el SII, rechazado, en blanco, folio de otra sucursal, CAF vencido…</td></tr>
+    <tr><td>6. Pantallas</td><td>El usuario ve resumen, documentos, alertas, compras y puede bajar XML y PDF.</td></tr>
+    <tr><td>Folios (aparte)</td><td>El agente revisa los folios, avisa en las cajas, pide CAF al SII, los carga en Sisgen y salta de rango solo.</td></tr>
+  </table>
+</section>
+
+<!-- ===================================================== PARTE A -->
+<section class="parte">
+  <div class="etq">Parte A</div>
+  <h2>Agente Sisgen (servidor del cliente)</h2>
+  <p class="intro">Carpeta <code>agente\</code>. Programa C# para .NET Framework 4 que se compila con <code>compilar.bat</code>. Lee Sisgen sin modificarlo; la única excepción son las tablas de folios.</p>
+
+  <h3>A.a · Arranque, configuración y registro <span class="arch">src\Program.cs</span></h3>
+  <table>
+    <tr><td class="f">Program.Main<small>Program.cs:23</small></td><td>Puerta de entrada del programa. Mira con qué opciones se abrió: <code>--folios</code> (muestra el estado de folios), <code>--caf</code> (consulta o pide folios al SII), <code>--folios-motor</code> (prueba del módulo de folios en ventana), <code>--cargar-caf</code> (carga un XML de CAF en Sisgen), <code>--consola</code> (corre en una ventana para pruebas) o <code>--una-vez</code> (un solo ciclo). Sin opciones, arranca como servicio de Windows. Si la configuración es “solo folios”, arranca solo ese módulo.</td></tr>
+    <tr><td class="f">Servicio.OnStart / OnStop / OnShutdown<small>Program.cs:142-153</small></td><td>Lo que hace Windows al iniciar, detener o apagar el servicio: lee <code>agente.ini</code>, revisa si viene de una actualización y arranca el motor (o el ciclo de solo folios). Al detener, cierra todo ordenadamente.</td></tr>
+    <tr><td class="f">Config.Cargar<small>Program.cs:164</small></td><td>Lee <code>agente.ini</code> línea por línea: portal, llave, carpeta de Sisgen, intervalo, certificado y todas las opciones de folios (<code>folios</code>, <code>foliosSisgen</code>, <code>foliosProduccion</code>, <code>avisoFolios</code>, <code>folioAviso</code>, <code>folioCritico</code>, <code>minutosCritico</code>). Sin portal ni llave pero con folios activados, queda en modo “solo folios”. Revisa que la llave empiece con <code>sga_</code>.</td></tr>
+    <tr><td class="f">Log.Info / Log.Error / Escribir<small>Program.cs:229-232</small></td><td>Escriben una línea con fecha y hora en el registro del agente (y en pantalla si corre en consola). Info = algo normal; Error = algo que falló.</td></tr>
+  </table>
+
+  <h3>A.b · Ciclo principal <span class="arch">src\Motor.cs</span></h3>
+  <p>El “corazón” del agente con llave: se repite cada 30 segundos.</p>
+  <table>
+    <tr><td class="f">Motor (constructor)<small>Motor.cs:27</small></td><td>Prepara todas las piezas: conexión al portal, estado guardado, historial, SII, compras, diagnósticos y un motor de folios por cada carpeta configurada.</td></tr>
+    <tr><td class="f">Iniciar<small>Motor.cs:44</small></td><td>Deja vigilantes sobre los XML nuevos y las tablas de traza, carga el certificado, inicia el hilo de consultas al SII y el bucle principal.</td></tr>
+    <tr><td class="f">Detener<small>Motor.cs:57</small></td><td>Avisa a todos los hilos que terminen, cierra los vigilantes y espera hasta 30 s.</td></tr>
+    <tr><td class="f">Vigilar<small>Motor.cs:67</small></td><td>Crea un vigilante sobre una carpeta: cuando aparece o cambia un archivo, despierta el ciclo de inmediato en vez de esperar los 30 s.</td></tr>
+    <tr><td class="f">Bucle<small>Motor.cs:82</small></td><td>Repite <code>Ciclo</code> mientras el servicio esté activo. Si un ciclo falla, guarda el error para informarlo al portal y sigue.</td></tr>
+    <tr><td class="f">Ciclo<small>Motor.cs:99</small></td><td>Una vuelta completa, en orden: saludo al portal (cada 60 s), seguimiento de envío (trazadte y trazabol), XML nuevos, ventas del mes, documentos en blanco, compras, diagnósticos, <b>folios (aislado)</b> y, al final y de a poco, el historial de XML antiguos.</td></tr>
+    <tr><td class="f">Hola<small>Motor.cs:205</small></td><td>Saludo al portal: envía versión, nombre del equipo, último error, datos de la empresa, avance del historial y estado del certificado. La respuesta trae instrucciones: actualización disponible, meses a enviar, documentos en blanco a buscar, cambio de carpeta, búsquedas en tablas.</td></tr>
+    <tr><td class="f">EnviarVentasMes<small>Motor.cs:143</small></td><td>Envía las ventas del mes actual cada pocas horas (y el anterior los primeros 10 días), los meses que pide el portal una vez al día y los meses “urgentes” por documentos corregidos.</td></tr>
+    <tr><td class="f">EnviarMesAntiguo<small>Motor.cs:175</small></td><td>Envía un mes antiguo por ciclo, del más nuevo al más antiguo, una sola vez. Anota los ya enviados en <code>estado\meses-enviados.txt</code>.</td></tr>
+    <tr><td class="f">EnviarTrazas<small>Motor.cs:238</small></td><td>Lee trazadte o trazabol de los últimos días y envía solo las filas que cambiaron (compara con una huella guardada).</td></tr>
+    <tr><td class="f">EnviarXml<small>Motor.cs:293</small></td><td>Busca XML nuevos en <code>procesos\DTE\AAMM</code> (mes actual y, a inicio de mes, el anterior), espera 3 s a que Sisgen termine de escribirlos, los comprime y los envía por lotes.</td></tr>
+    <tr><td class="f">CuentaRechazados<small>Motor.cs:359</small></td><td>Cuenta cuántos XML rechazó el portal en su respuesta (por ejemplo, de otro RUT).</td></tr>
+    <tr><td class="f">MesesAVigilar<small>Motor.cs:371</small></td><td>Entrega las carpetas de mes a revisar: la actual y, hasta el día 5, también la anterior.</td></tr>
+    <tr><td class="f">LeerCompartido · Gzip · BuscarArchivo<small>Motor.cs:378-402</small></td><td>Ayudantes: leer un archivo sin bloquearlo para Sisgen, comprimirlo, y buscar un archivo en una carpeta.</td></tr>
+    <tr><td class="f">Estado (clase)<small>Motor.cs:410-457</small></td><td>Memoria del agente en disco: qué trazas y qué XML ya se enviaron. <code>HuellaTraza</code>/<code>FijarTraza</code> leen y anotan la huella de una traza; <code>XmlEnviado</code>/<code>MarcarXml</code> hacen lo mismo con XML; <code>Guardar</code> escribe en disco y olvida lo de más de 45 días; <code>EscribirSeguro</code> escribe primero en un archivo temporal para no dejar uno a medias si se corta la luz.</td></tr>
+  </table>
+
+  <h3>A.c · Lectura de tablas de Sisgen <span class="arch">src\Dbf.cs</span></h3>
+  <table>
+    <tr><td class="f">TablaDbf (abrir)<small>Dbf.cs:29</small></td><td>Abre una tabla DBF en <b>solo lectura y compartida</b> (Sisgen puede seguir usándola) y lee su cabecera: cantidad de registros y lista de campos.</td></tr>
+    <tr><td class="f">LeerExacto<small>Dbf.cs:52</small></td><td>Lee una cantidad exacta de bytes desde una posición del archivo.</td></tr>
+    <tr><td class="f">Leer<small>Dbf.cs:65</small></td><td>Entrega el registro número i. Si está borrado o dañado (pasa tras un corte de luz), entrega null.</td></tr>
+    <tr><td class="f">Texto · Fecha · Numero · Valor<small>Dbf.cs:74-111</small></td><td>Sacan el valor de un campo del registro: como texto, como fecha (<code>2026-11-20</code>), como número, o según el tipo del campo.</td></tr>
+  </table>
+
+  <h3>A.d · Comunicación con el portal <span class="arch">src\Portal.cs · src\JsonLector.cs</span></h3>
+  <table>
+    <tr><td class="f">Portal (constructor)<small>Portal.cs:30-37</small></td><td>Activa TLS 1.2 (conexión segura) y arma la dirección <code>…/api/agente</code> con la llave del agente.</td></tr>
+    <tr><td class="f">Enviar · Descargar · Pedir<small>Portal.cs:43-59</small></td><td>Envían datos al portal (opcionalmente comprimidos) con la llave en la cabecera <code>Authorization</code>, y reciben la respuesta. <code>Descargar</code> se usa para bajar actualizaciones.</td></tr>
+    <tr><td class="f">RespuestaPortal.Valor<small>Portal.cs:17</small></td><td>Saca un dato de la respuesta del portal por su nombre.</td></tr>
+    <tr><td class="f">Json.Texto · Objeto · Valor<small>Portal.cs:101-136</small></td><td>Arman texto JSON a mano (.NET 4 no trae uno incluido).</td></tr>
+    <tr><td class="f">JsonLector.Leer y ayudantes<small>JsonLector.cs:16-77</small></td><td>Lo contrario: leen el JSON que responde el portal y lo convierten en listas y diccionarios que el agente entiende.</td></tr>
+  </table>
+
+  <h3>A.e · Cuadratura: ventas, XML e historial <span class="arch">src\Ventas.cs · src\Historial.cs</span></h3>
+  <table>
+    <tr><td class="f">Ventas.Empresa<small>Ventas.cs:20</small></td><td>Lee de empres.dbf el RUT, la razón social, el nombre, el código de sucursal y los datos de resolución. <b>Nunca lee la clave DTECLAVE.</b></td></tr>
+    <tr><td class="f">Ventas.MesesConVentas<small>Ventas.cs:46</small></td><td>Lista los meses que tienen tabla F1MMAAAA, del más nuevo al más antiguo.</td></tr>
+    <tr><td class="f">Ventas.PaqueteMes<small>Ventas.cs:65</small></td><td>Arma el paquete de un mes: F1 (encabezados), qué documentos tienen detalle en F2, CLIDOCTO y CLIPAGOS recientes, nombres de los XML del mes y meses vecinos, y rangos de CAF. Es lo que el portal usa para cuadrar.</td></tr>
+    <tr><td class="f">LeerTodo · LeerRecientes · Fila<small>Ventas.cs:113-144</small></td><td>Leen una tabla completa o solo sus últimos registros (CLIDOCTO y CLIPAGOS guardan todos los años) y convierten cada registro en una fila con los campos pedidos.</td></tr>
+    <tr><td class="f">NombresXml · RangosCaf<small>Ventas.cs:151-166</small></td><td>Lista los nombres de XML de una carpeta, y el tipo, rango y fecha de autorización de cada CAF de <code>procesos\Folios</code>. <b>La llave privada del CAF nunca se envía.</b></td></tr>
+    <tr><td class="f">Ventas.Buscar<small>Ventas.cs:193</small></td><td>Busca una tabla en la carpeta de datos (sin importar mayúsculas).</td></tr>
+    <tr><td class="f">Historial (constructor) · Resumen · FijarRut<small>Historial.cs:37-59</small></td><td>Carga de todos los XML antiguos al portal. Prepara archivos de avance, entrega el texto de avance (“carpetas 3 de 20…”) y fija el RUT propio para descartar XML de otro RUT.</td></tr>
+    <tr><td class="f">Historial.Avanzar<small>Historial.cs:65</small></td><td>Envía unos pocos lotes por ciclo para no saturar el equipo ni la conexión; retoma donde quedó si el equipo se reinicia. Nunca sube un archivo que tenga llave privada.</td></tr>
+    <tr><td class="f">Planificar · ArchivosXml · Leer<small>Historial.cs:111-143</small></td><td>Decide el orden (meses de <code>procesos\DTE</code> del más nuevo al más antiguo y luego el resto), lista los XML de cada carpeta y lee cada uno revisando que sea del RUT propio.</td></tr>
+    <tr><td class="f">RecordarFolios · MarcarHecha · Terminar<small>Historial.cs:172-185</small></td><td>Anotan qué documentos y carpetas ya se subieron y marcan el historial como terminado.</td></tr>
+  </table>
+
+  <h3>A.f · Compras y documentos en blanco <span class="arch">src\Compras.cs · src\Respaldo.cs</span></h3>
+  <table>
+    <tr><td class="f">Compras.Avanzar<small>Compras.cs:38</small></td><td>Cada 5 minutos revisa la carpeta de XML recibidos de proveedores y envía al portal los nuevos, comprimidos.</td></tr>
+    <tr><td class="f">Compras.Cargar · Marcar<small>Compras.cs:90-97</small></td><td>Leen y anotan en <code>estado\compras-enviadas-v2.txt</code> qué archivos ya se enviaron (ruta, tamaño y fecha), para no repetir.</td></tr>
+    <tr><td class="f">Respaldo.Recibir<small>Respaldo.cs:21</small></td><td>Recibe del portal la lista de documentos “en blanco” que hay que buscar.</td></tr>
+    <tr><td class="f">Respaldo.Carpeta<small>Respaldo.cs:28</small></td><td>Encuentra la carpeta <code>backup</code> de Sisgen.</td></tr>
+    <tr><td class="f">Respaldo.Procesar<small>Respaldo.cs:39</small></td><td>Busca cada documento en el respaldo del día (<code>AAAAMMDD.dbf</code>) y envía al portal lo que llevaba: producto, cantidad, precio y total.</td></tr>
+    <tr><td class="f">Respaldo.BuscarEnDt<small>Respaldo.cs:109</small></td><td>Si no está en backup, lo busca en la tabla DTMMAAAA del mes.</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">A.g · Consultas al SII con el certificado <span class="arch">src\Sii.cs · src\ConsultasSii.cs</span></h3>
+  <p>El portal pide una consulta; el agente la hace con el certificado del cliente y devuelve solo la respuesta. El certificado y su clave nunca salen del servidor del cliente.</p>
+  <table>
+    <tr><td class="f">Sii.FijarRut<small>Sii.cs:43</small></td><td>Guarda el RUT de la empresa: solo se consulta ese RUT.</td></tr>
+    <tr><td class="f">CargarCertificado<small>MotorFolios.cs:327</small></td><td>Busca el .pfx en <code>procesos\certificado</code> y prueba claves posibles hasta abrirlo. Si hay varios, se queda con el que vence más tarde.</td></tr>
+    <tr><td class="f">RevisarCertificado · FirmaCarpeta<small>Sii.cs:93-108</small></td><td>Cada 5 minutos revisa si cambió la carpeta del certificado (renovado, reemplazado); si cambió o está vencido, lo vuelve a cargar sin reiniciar el servicio.</td></tr>
+    <tr><td class="f">CertificadoTls<small>Sii.cs:129</small></td><td>Entrega el certificado preparado para entrar a las páginas web del SII (timbraje de folios). Lo abre en el almacén del equipo si es servicio, o del usuario si es ventana.</td></tr>
+    <tr><td class="f">AbrirPfx · Usar · ClavesPosibles<small>Sii.cs:141-165</small></td><td>Abren el .pfx con una clave, lo dejan como certificado activo con su estado (“ok; vence…”), y arman la lista de claves a probar: nombres de archivos .txt de la carpeta y campos de clave de empres/prmsis. La clave nunca se registra.</td></tr>
+    <tr><td class="f">FirmarSemilla · TokenDte · TokenBoletas<small>Sii.cs:196-254</small></td><td>Inicio de sesión en el SII: pide una semilla, la firma con el certificado y la cambia por un token. Uno para servicios DTE y otro para la API de boletas. Los guarda mientras sirvan.</td></tr>
+    <tr><td class="f">Ejecutar · EjecutarUnaVez<small>Sii.cs:275-288</small></td><td>Hace la consulta pedida: Registro de Ventas, estado de una boleta o estado de un envío. Si el token venció, pide otro y reintenta una vez.</td></tr>
+    <tr><td class="f">Soap · Http · Etiqueta · Desescapar<small>Sii.cs:214-335</small></td><td>Ayudantes para conversar con el SII: arman el mensaje, lo envían y sacan datos de la respuesta.</td></tr>
+    <tr><td class="f">ConsultasSii.Iniciar · Detener · Bucle<small>ConsultasSii.cs:20-28</small></td><td>Hilo que espera pedidos del portal (el portal deja la conexión abierta hasta que hay uno), los ejecuta y devuelve resultados.</td></tr>
+    <tr><td class="f">ConsultasSii.Ejecutar · Uno<small>ConsultasSii.cs:52-72</small></td><td>Ejecuta varios pedidos en paralelo, con un máximo simultáneo, y arma la respuesta de cada uno.</td></tr>
+  </table>
+
+  <h3>A.h · Diagnóstico, cambio de carpeta y actualización <span class="arch">src\Inventario.cs · BuscaTablas.cs · CambioCarpeta.cs · Actualizador.cs</span></h3>
+  <table>
+    <tr><td class="f">Inventario.Avanzar · BuscarDescargas · Recorrer · Fila<small>Inventario.cs:18-87</small></td><td>Una vez por hora informa qué carpetas hay en <code>procesos</code> y cuántos archivos de cada tipo (nunca su contenido). Busca carpetas <code>Correo\Descargas</code> en los discos para encontrar compras.</td></tr>
+    <tr><td class="f">BuscaTablas.Recibir<small>BuscaTablas.cs:21</small></td><td>El portal pide “¿en qué tabla está este documento?” (por ejemplo, folio y RUT). Responde qué tablas tienen un registro con esos textos y sus columnas, sin enviar el contenido.</td></tr>
+    <tr><td class="f">CambioCarpeta.Revisar<small>CambioCarpeta.cs:18</small></td><td>Cambia la carpeta de Sisgen que lee el agente si el portal lo pide. Antes revisa que sea un Sisgen y del mismo RUT, guarda copia de <code>agente.ini</code> y reinicia el servicio.</td></tr>
+    <tr><td class="f">Clave · Fijar · Rut<small>CambioCarpeta.cs:78-90</small></td><td>Ayudantes para leer y cambiar líneas de <code>agente.ini</code> y comparar RUT.</td></tr>
+    <tr><td class="f">Actualizador.Revisar<small>Actualizador.cs:80</small></td><td>Si el portal ofrece una versión mayor, la descarga e instala.</td></tr>
+    <tr><td class="f">Actualizador.Instalar · FirmaValida<small>Actualizador.cs:101-124</small></td><td>Antes de instalar comprueba la firma de Sisgen y la huella del archivo; si no calzan, no instala nada. Guarda la versión anterior y reinicia.</td></tr>
+    <tr><td class="f">AlIniciar · Confirmar · VolverAtras<small>Actualizador.cs:32-63</small></td><td>Al arrancar tras una actualización, espera que la versión nueva logre hablar con el portal. Si lo logra, la confirma; si no, vuelve sola a la anterior.</td></tr>
+    <tr><td class="f">Reiniciar · Comparar<small>Actualizador.cs:141-149</small></td><td>Reinicia el servicio desde un proceso aparte, y compara números de versión (1.6.10 &lt; 1.7.0).</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">A.i · Folios <span class="arch">src\Folios.cs · MotorFolios.cs · CafSii.cs · CargaCaf.cs</span></h3>
+  <p><b>Folios.cs: el contador.</b> Solo lee.</p>
+  <table>
+    <tr><td class="f">TipoFolio.Todos<small>Folios.cs:31</small></td><td>Tabla de equivalencias de los 7 documentos: código Sisgen (BE, FE…), código SII (39, 33…), nombre, campo de espera en prmsis, campo de correlativo en correlat y si vence.</td></tr>
+    <tr><td class="f">Folios.Calcular<small>Folios.cs:72</small></td><td>Para cada documento calcula: tope, próximo folio, cuántos quedan, rango en espera, CAF activo, tamaño del último rango, vencimiento, consumo diario, y alertas (correlativo atrasado, folio de otra sucursal, tope sin CAF, sin folios, CAF vencido).</td></tr>
+    <tr><td class="f">Folios.Resumen<small>Folios.cs:126</small></td><td>Arma el cuadro de texto que muestra <code>SisgenAgente.exe --folios</code>.</td></tr>
+    <tr><td class="f">Ruta · PrimerRegistro · Correlativos · Cafs<small>Folios.cs:146-179</small></td><td>Leen prmsis, correlat (el mayor si hay varios registros) y la lista de CAF de folios.dbf.</td></tr>
+    <tr><td class="f">Consumo<small>Folios.cs:199</small></td><td>Cuenta documentos emitidos en los últimos 30 días (tablas F1 del mes y el anterior) y el mayor folio emitido de cada tipo.</td></tr>
+    <tr><td class="f">Entero · FechaDbf<small>Folios.cs:226-232</small></td><td>Convierten texto a número o a fecha sin caerse si viene vacío.</td></tr>
+  </table>
+  <p><b>MotorFolios.cs: el encargado.</b></p>
+  <table>
+    <tr><td class="f">CicloFolios (clase)<small>MotorFolios.cs:19-51</small></td><td>Modo “solo folios” (sin llave): crea un motor por carpeta y repite <code>Revisar</code> cada 30 s. <code>Iniciar</code> y <code>Detener</code> encienden y apagan ese ciclo.</td></tr>
+    <tr><td class="f">LeerAvisos<small>MotorFolios.cs:65</small></td><td>Convierte <code>avisoFolios=39:10;61:3;33:0</code> en “boletas: avisar con 10; notas de crédito: con 3; facturas: <b>no vigilar</b>”. El 0 sale de desmarcar el documento en el instalador.</td></tr>
+    <tr><td class="f">NoVigilar<small>MotorFolios.cs:63</small></td><td>Dice si un documento fue desmarcado en el instalador (valor 0). Esos documentos no se avisan ni se piden al SII. <i>Ejemplo:</i> una sucursal que no emite facturas.</td></tr>
+    <tr><td class="f">MotorFolios (constructor)<small>MotorFolios.cs:81</small></td><td>Fija las carpetas y deja dos vigilantes: uno sobre correlat.dbf (salto inmediato) y otro sobre los <code>pedido_*.txt</code> (atiende a la caja que está esperando).</td></tr>
+    <tr><td class="f">SaltoRapido<small>MotorFolios.cs:117</small></td><td>Revisión liviana tras cada venta: si un documento pasó su tope y hay rango en espera, lo asigna. Es lo que evita usar folios de otra sucursal.</td></tr>
+    <tr><td class="f">Revisar<small>MotorFolios.cs:142-203</small></td><td>La vuelta completa: 1) salto, 1b) carga los CAF ya pedidos al SII que quedaron sin cargar, 2) pedidos de las cajas, 3) avisos y carga automática si lleva 30 min en crítico, y escribe <code>avisos.txt</code>. Si un documento tiene folios ya pedidos sin cargar, <b>no muestra el aviso</b> (pedir más solo gastaría folios).</td></tr>
+    <tr><td class="f">ProbarSii<small>MotorFolios.cs:150</small></td><td>Al arrancar el servicio entra al SII con el certificado y vuelve a salir (no pide nada), para saber de inmediato si podrá pedir folios. Deja el resultado en el registro y en <code>procesos\folios\agente\estado_sii.txt</code>, que lee el instalador. Es la prueba real, con la misma cuenta de Windows del servicio.</td></tr>
+    <tr><td class="f">Sucursal<small>MotorFolios.cs:204</small></td><td>Nombre que aparece en el aviso: DTESUC de empres.dbf, si no DTEDIR, si no el nombre de la carpeta.</td></tr>
+    <tr><td class="f">Nivel<small>MotorFolios.cs:223</small></td><td>Decide si un documento está bien, en aviso o crítico. No avisa si ya hay rango en espera ni si el rango está recién asignado. Con número por documento: aviso = N, crítico = la cuarta parte. Si no: 20 % y 5 % del rango.</td></tr>
+    <tr><td class="f">Atender<small>MotorFolios.cs:247</small></td><td>Revisa un pedido de una caja (tipo y cantidad válidos, que todavía haga falta, que no sea exagerado) y lo <b>anota</b>. Si ya hay un pedido anotado de ese documento, no pide otro.</td></tr>
+    <tr><td class="f">AnotarPedidoCaja · IntentarPedidoAnotado<small>MotorFolios.cs</small></td><td><b>La cantidad se escribe una sola vez.</b> El pedido queda anotado en <code>caf\&lt;carpeta&gt;\pedido_anotado_&lt;tipo&gt;.txt</code> (cantidad, quién, cuándo) y se intenta de inmediato. Si falla (SII sin respuesta, certificado, Sisgen ocupado…), se reintenta solo cada 10 minutos con la misma cantidad; en la caja aparece una vez “se reintentará solo, no hace falta volver a pedir” y no vuelve a salir el cuadro para escribir. Si el SII autoriza menos, se ajusta al máximo. Tras 2 horas sin resultado avisa “llame a soporte”. Se borra cuando los folios se cargan o el CAF ya se bajó del SII. <i>Ejemplo:</i> la caja pide 50.000 boletas, el SII no responde; a los 10 minutos el agente vuelve a pedir esos mismos 50.000.</td></tr>
+    <tr><td class="f">PedidosHechos · RevisarTope · AnotarPedido<small>MotorFolios.cs:378-414</small></td><td><b>Tope de seguridad.</b> Cada pedido al SII se anota en <code>caf\&lt;carpeta&gt;\pedidos_sii.txt</code>. Antes de pedir, si ya se pidieron folios de ese documento hace menos de una hora, o 3 veces en el día, no pide y avisa “llame a soporte”. Así, aunque aparezca un error que no conocemos, nunca se piden folios en bucle.</td></tr>
+    <tr><td class="f">Pendientes · Archivar<small>MotorFolios.cs:262-288</small></td><td><code>Pendientes</code> lista los CAF que el agente pidió al SII y todavía están en su cola (sin cargar). <code>Archivar</code> los mueve a <code>cargados</code> (o a <code>no_usados</code> si ya no sirven).</td></tr>
+    <tr><td class="f">PendientesSinCargar<small>MotorFolios.cs</small></td><td>Los pendientes que de verdad faltan: descarta los que ya están cargados en Sisgen. Es lo que decide si se oculta el aviso y si se frena un pedido nuevo.</td></tr>
+    <tr><td class="f">CargarPendientes<small>MotorFolios.cs:294</small></td><td>Carga en Sisgen los CAF ya pedidos que no se pudieron cargar antes (Sisgen ocupado, un error). Son folios ya autorizados por el SII: se usan antes de pedir otros. Si ya quedaron atrás del folio actual, los aparta y avisa “llame a soporte”. <i>Ejemplo:</i> las facturas 1456-1462 que quedaron pedidas se cargan solas en la próxima revisión. No carga nada de un documento desmarcado en el instalador: esos folios se anulan en el SII. Si el archivo corresponde a un CAF que <b>ya está</b> en folios.dbf (lo dejó una versión anterior o se cargó a mano), solo lo archiva, sin alarma.</td></tr>
+    <tr><td class="f">Cargar<small>MotorFolios.cs:254</small></td><td>Si hay folios ya pedidos sin cargar, <b>no pide más</b>. Si no, consulta al SII, respeta su máximo, pide los folios, los carga en Sisgen, guarda el XML en <code>cargados</code> y deja el mensaje “se asignaron…” o “se cargaron… se usarán cuando se terminen los actuales”. Si la carga falla, el XML queda en la cola para reintentar.</td></tr>
+    <tr><td class="f">MaximoSii<small>MotorFolios.cs:355</small></td><td>Pregunta al SII cuántos folios autoriza (facturas y notas) y recuerda la respuesta por una hora. Si el SII no respondió, vuelve a intentar a los 10 minutos. Siempre cierra la sesión al terminar.</td></tr>
+    <tr><td class="f">Informar<small>MotorFolios.cs:370</small></td><td>Anota un mensaje para las cajas y el registro. Solo cuando se <b>asignan</b> folios agrega “Recuerda cerrar y volver a abrir la pantalla de ventas”.</td></tr>
+    <tr><td class="f">LeerPedido · BorrarPedidos · Escribir<small>MotorFolios.cs:378-400</small></td><td>Leen un pedido (<code>tipo=</code>, <code>cantidad=</code>…), borran los pedidos repetidos del mismo documento y escriben <code>avisos.txt</code> de forma segura.</td></tr>
+  </table>
+  <p><b>CafSii.cs: el que va al SII.</b> Imita la página de timbraje del SII.</p>
+  <table>
+    <tr><td class="f">CafSii (constructor)<small>CafSii.cs:38</small></td><td>Lee de empres.dbf el ambiente (maullin = certificación, palena = producción) y el RUT. Con el candado de certificación activo, rechaza producción.</td></tr>
+    <tr><td class="f">Entrar<small>CafSii.cs:60</small></td><td>Inicia sesión en el SII con el certificado (TLS 1.2) y revisa que el SII haya entregado el TOKEN. Si no lo entrega, guarda la página que respondió el SII en <code>logs\sii_login_rechazado.html</code> y pone su texto en el error, para saber el motivo real (sesiones llenas, certificado no autorizado, etc.).</td></tr>
+    <tr><td class="f">Salir · Dispose<small>CafSii.cs:81</small></td><td>Cierra la sesión en el SII (igual que el botón "Cerrar Sesión" del sitio). Es importante porque el SII permite como máximo 10 sesiones abiertas por persona: si el agente las dejara abiertas, las otras sucursales y el navegador no podrían entrar. <i>Ejemplo:</i> pide folios para Plaza Vespucio y al terminar libera la sesión para que Walker Martínez pueda entrar.</td></tr>
+    <tr><td class="f">ProbarEntrada<small>CafSii.cs:95</small></td><td>Solo entra al SII con el certificado y vuelve a salir. La usa la prueba del arranque.</td></tr>
+    <tr><td class="f">Consultar<small>CafSii.cs:92</small></td><td>Recorre las pantallas del SII: RUT, documento y cantidad. Obtiene el rango que el SII entregaría (desde/hasta), lo disponible y el máximo autorizado. <b>No genera folios.</b></td></tr>
+    <tr><td class="f">Pedir<small>CafSii.cs:126</small></td><td>Genera los folios en el SII, descarga el XML, revisa que sean el RUT, el documento y el rango pedidos, y lo guarda como <code>T39D…H….xml</code> en la cola del agente.</td></tr>
+    <tr><td class="f">Post · PostBytes · Form · Campos · Texto · Error · Nodo · Guardar<small>CafSii.cs:147-214</small></td><td>Ayudantes de la conversación web: envían formularios con el certificado, leen los campos de cada pantalla, sacan el texto y el mensaje de error del SII, y guardan la última pantalla para revisar problemas.</td></tr>
+  </table>
+  <p><b>CargaCaf.cs: el que carga en Sisgen.</b> Única parte que escribe en Sisgen (folios.dbf/.cdx, prmsis.dbf, correlat.dbf y <code>procesos\folios</code>).</p>
+  <table>
+    <tr><td class="f">CargaCaf.Cargar<small>CargaCaf.cs:26</small></td><td>Igual que “Cargar nuevos folios” de Sisgen: revisa el XML (válido, con llave, del RUT de la empresa, no repetido, sin cruces, que sirva), respalda las tablas, actualiza el índice, copia el XML, agrega la fila a folios.dbf y luego <b>asigna</b> el rango (si no quedan folios) o lo deja <b>en espera</b>. Si algo falla a medias, restaura el respaldo.</td></tr>
+    <tr><td class="f">CargaCaf.AsignarEspera<small>CargaCaf.cs:156</small></td><td>El salto: tope = fin del rango en espera, próximo = el mayor entre el inicio de la espera y el actual, mueve el vencimiento y vacía la ranura. Con respaldo y restauración si falla.</td></tr>
+    <tr><td class="f">SonIguales · Num · Requerido<small>CargaCaf.cs:203-206</small></td><td>Ayudantes: comparar archivos, leer números y exigir que una tabla exista.</td></tr>
+    <tr><td class="f">CarpetaRespaldo · BorrarSiNadaCambio<small>CargaCaf.cs:206-224</small></td><td>Antes de tocar Sisgen se copia folios, prmsis y correlat a una carpeta de respaldo con fecha, hora y milésimas, para que dos cargas seguidas no choquen. Si la carga falla y las tablas quedaron iguales que antes, ese respaldo se borra (no hace falta).</td></tr>
+    <tr><td class="f">Bloqueo.Registro · Cabecera · Tabla · Tomar<small>CargaCaf.cs:240-248</small></td><td>Bloquean igual que Visual FoxPro (RLOCK/FLOCK) para escribir con Sisgen abierto sin pisar una venta. Si Sisgen tiene tomado el registro, reintenta durante 10 s y si no, no cambia nada.</td></tr>
+    <tr><td class="f">Dbf (clase de escritura)<small>CargaCaf.cs:263-362</small></td><td>Abre una tabla para escribir: <code>Borrado</code>, <code>PrimerVigente</code> y <code>Texto</code> leen; <code>Escribir</code> cambia un campo respetando su formato (ceros a la izquierda en correlat); <code>Agregar</code> añade un registro; <code>Fecha</code> actualiza la fecha de modificación de la tabla.</td></tr>
+    <tr><td class="f">IndiceCdx.Agregar<small>CargaCaf.cs:377</small></td><td>Actualiza folios.cdx, el índice de Sisgen (como el índice de un libro: dice en qué filas está cada tipo de documento). Lee todas sus páginas (“hojas”), revisa que coincida con la tabla, agrega el CAF nuevo y vuelve a armar el índice completo, con una o varias páginas. Así funciona con clientes que tienen muchos CAF cargados. Conserva una marca interna de FoxPro (el “4” de los nodos tipo 5, 6 y 7) tal como venía. Si la tabla pasa el número de filas que cabe en el formato de las páginas (por ejemplo 4.095), usa el formato siguiente, igual que FoxPro.</td></tr>
+    <tr><td class="f">Recorrer · Hermanos · Costo<small>CargaCaf.cs:499-550</small></td><td><code>Recorrer</code> lee el índice página por página y revisa que esté sano. <code>Hermanos</code> enlaza cada página con la anterior y la siguiente. <code>Costo</code> calcula cuánto espacio ocupa cada clave para saber cuándo empezar otra página.</td></tr>
+    <tr><td class="f">Decodificar · Codificar · Comparar · Iguales<small>CargaCaf.cs:552-625</small></td><td>Leen y escriben una hoja comprimida del índice de FoxPro y comparan claves.</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">A.j · Aviso de folios en cada equipo <span class="arch">aviso\AvisoFolios.cs</span></h3>
+  <p>Programa con ventanas que corre en cada caja. Solo lee <code>avisos.txt</code> y escribe <code>pedido_*.txt</code>.</p>
+  <table>
+    <tr><td class="f">Programa.Main<small>AvisoFolios.cs:41</small></td><td>Arranca una sola copia por sesión. Obtiene las carpetas de Sisgen (por argumentos, <code>avisofolios.ini</code> o la propia ubicación en la red). Si se abrió desde la red, se registra para abrirse al iniciar sesión. Revisa cada 10 s.</td></tr>
+    <tr><td class="f">InstalarEnEsteEquipo · AbrirLocal<small>AvisoFolios.cs:89-119</small></td><td>La primera vez que se abre el aviso desde la carpeta del servidor (<code>procesos\folios\agente</code>), se copia al disco de la caja (<code>AppData\Local\AvisoFoliosSisgen</code>), anota la carpeta de Sisgen y queda arrancando solo al encender, desde el disco local: sin advertencias de red y <b>sin tener que volver a abrirlo nunca</b>. No necesita permisos de administrador.</td></tr>
+    <tr><td class="f">Actualizar<small>AvisoFolios.cs:125</small></td><td>Cada vez que arranca en la caja, compara su archivo con el del servidor; si el del servidor es más nuevo (llegó con una versión nueva del agente), se reemplaza solo y se vuelve a abrir.</td></tr>
+    <tr><td class="f">Demo<small>AvisoFolios.cs:82</small></td><td>Con <code>--demo</code> muestra, una tras otra, todas las ventanas que puede ver una caja (aviso, espera y cada mensaje), sin leer ni escribir nada.</td></tr>
+    <tr><td class="f">Revisar<small>AvisoFolios.cs:103</small></td><td>Lee <code>avisos.txt</code>: abre una ventana por aviso nuevo (salvo que esté pospuesto), muestra los mensajes nuevos y cierra los avisos que ya no están (otra caja cargó). Si <code>avisos.txt</code> no existe o lleva más de 10 minutos sin cambiar (agente detenido), cierra los avisos en vez de seguir mostrándolos.</td></tr>
+    <tr><td class="f">LeerLineas<small>AvisoFolios.cs:25</small></td><td>Lee <code>avisos.txt</code> sin bloquearlo para el servidor.</td></tr>
+    <tr><td class="f">Ventana (clase base)<small>AvisoFolios.cs:170-232</small></td><td>Molde común de todas las ventanas: estilo Windows, al centro, encima de todo, ícono escalado a la pantalla y sonido de Windows. <code>RepetirSonido</code> repite el sonido; <code>Linea</code> agrega texto; <code>Boton</code> agrega un botón.</td></tr>
+    <tr><td class="f">VentanaAviso<small>AvisoFolios.cs:241</small></td><td>“Te quedan X folios. ¿Cuántos quieres cargar?”. Solo acepta números, no deja pasar el máximo del SII y recuerda el vencimiento en facturas y notas. “Más tarde” vuelve a avisar a los 2 min (1 min si es crítico).</td></tr>
+    <tr><td class="f">VentanaAviso.Cargar · CerrarSinPosponer<small>AvisoFolios.cs:268-290</small></td><td>Escribe el pedido en la carpeta compartida y abre la ventana de espera; o cierra el aviso sin posponer (cuando otro equipo ya cargó).</td></tr>
+    <tr><td class="f">VentanaEspera<small>AvisoFolios.cs:307-347</small></td><td>“Cargando folios…” con barra en movimiento y sin X. Cada 2 s busca la respuesta del servidor; cuando llega, se cierra y muestra el resultado. A los 3 min sin respuesta deja cerrar y sugiere revisar el servidor.</td></tr>
+    <tr><td class="f">VentanaMensaje<small>AvisoFolios.cs:355</small></td><td>Muestra el resultado con un título según el caso: “Folios cargados”, “Folios asignados” (con el recordatorio de reabrir ventas), “Cantidad ajustada” (el SII autoriza menos), “Los folios se cargarán más tarde” (ícono amarillo: el pedido quedó anotado y se reintenta solo) o “No se pudieron cargar los folios” (ícono rojo: llamar a soporte). Se cierra sola a los 2 minutos.</td></tr>
+  </table>
+
+  <h3>A.k · Instalador <span class="arch">instalador\Instalador.cs</span></h3>
+  <table>
+    <tr><td class="f">Instalador.Main · Instalado · Sc · DetenerServicio<small>Instalador.cs:26-49</small></td><td>Abre el asistente; revisa si el servicio ya existe; ejecuta comandos de servicios de Windows; detiene el servicio anterior.</td></tr>
+    <tr><td class="f">CarpetasSisgen · Candidatos · Subcarpetas<small>Instalador.cs:68-98</small></td><td>Buscan instalaciones de Sisgen en los discos (carpetas con <code>datos</code> y empres.dbf) para ofrecerlas.</td></tr>
+    <tr><td class="f">Recurso · AgenteIncluido<small>Instalador.cs:105</small></td><td>Sacan los programas que van dentro del instalador (el agente y el aviso).</td></tr>
+    <tr><td class="f">Asistente · Poner · Mostrar · Avanzar<small>Instalador.cs:184-638</small></td><td>La ventana del asistente y la navegación entre pasos.</td></tr>
+    <tr><td class="f">PasoBienvenida<small>Instalador.cs:263</small></td><td>Si ya está instalado, ofrece Actualizar o Desinstalar y prellena todo desde <code>agente.ini</code>. Al actualizar salta directo al paso Folios.</td></tr>
+    <tr><td class="f">PasoCarpeta · LeerEmpresa<small>Instalador.cs:302-349</small></td><td>Elige la carpeta de Sisgen y lee la empresa.</td></tr>
+    <tr><td class="f">PasoLlave<small>Instalador.cs:359</small></td><td>Pide la llave del portal y la prueba. Vacía = solo folios.</td></tr>
+    <tr><td class="f">PasoFolios<small>Instalador.cs:403</small></td><td>Activa los folios, elige las carpetas que atiende el servidor y la casilla Producción (pide confirmación).</td></tr>
+    <tr><td class="f">PasoAvisos · TextoAvisos<small>Instalador.cs:439-490</small></td><td>Tabla con los documentos habilitados en ese Sisgen: casilla <b>Vigilar</b> (desmarcar los que la sucursal no emite), lo que queda hoy y con cuántos folios avisar. Lo convierte en <code>avisoFolios=…</code> (0 = no vigilar).</td></tr>
+    <tr><td class="f">PasoConfirmar<small>Instalador.cs:492</small></td><td>Resumen antes de instalar. Si los folios están activos, <b>revisa el cliente</b> (con <code>RevisionCliente</code>) y muestra la lista de ✓ y ✗. Si hay algún ✗, no deja instalar: hay que enviar la lista a soporte o desactivar los folios.</td></tr>
+    <tr><td class="f">PasoInstalar · EsperarPruebaSii<small>Instalador.cs:505 · 644</small></td><td>Pantalla de avance. Al final espera (hasta 2 minutos) la prueba de entrada al SII que hace el servicio y muestra ✓ o ✗ con el mensaje del SII.</td></tr>
+    <tr><td class="f">Instalar<small>Instalador.cs:524</small></td><td>Copia el agente, crea o actualiza <code>agente.ini</code> (al actualizar solo cambia las líneas de folios), copia el aviso a cada <code>procesos\folios\agente</code> y a Program Files, lo deja al inicio de sesión, registra el servicio con reinicio automático y lo inicia.</td></tr>
+    <tr><td class="f">Desinstalar · LeerIni<small>Instalador.cs:605-623</small></td><td>Quita el servicio, el aviso y los archivos (Sisgen no se toca); lee la configuración existente.</td></tr>
+    <tr><td class="f">RevisionCliente.Revisar<small>src\RevisionCliente.cs</small></td><td>Revisa una carpeta de Sisgen <b>solo leyendo</b>: que se lean las tablas de folios, que haya un solo correlativo (no por caja), que el agente sepa actualizar su índice (lo prueba agregando un CAF en una <b>copia temporal</b>) y que haya certificado. También se usa a mano: <code>SisgenAgente.exe --revisar C:\sisgen</code>.</td></tr>
+  </table>
+</section>
+
+<!-- ===================================================== PARTE B -->
+<section class="parte">
+  <div class="etq">Parte B</div>
+  <h2>Servidor del portal</h2>
+  <p class="intro">Carpeta <code>server\</code>. JavaScript (Node.js). Se inicia con <code>npm start</code>.</p>
+
+  <h3>B.a · Arranque, configuración y base de datos <span class="arch">server\index.js · config.js · db.js</span></h3>
+  <table>
+    <tr><td class="f">index.js<small>server\index.js</small></td><td>Arranca el servidor web: abre la base de datos, conecta las rutas (API, agente, administración, ingreso), sirve las pantallas e inicia las tareas automáticas.</td></tr>
+    <tr><td class="f">cargarConfig<small>config.js:15</small></td><td>Lee <code>config/config.local.json</code> (empresas, sucursales, certificados locales). Si no existe, usa modo de ejemplo.</td></tr>
+    <tr><td class="f">abrirDb · migrar · getDb · transaccion<small>db.js:276-372</small></td><td>Abren la base de datos SQLite, aplican cambios de estructura a bases antiguas, entregan la conexión, y ejecutan varios cambios como uno solo (si uno falla, no queda nada a medias).</td></tr>
+    <tr><td class="f">carpetaXml · rutaRelativaXml · rutaRelativaCompra · rutaCompra<small>db.js:271-360</small></td><td>Dónde se guardan en disco los XML comprimidos de ventas y compras.</td></tr>
+    <tr><td class="f">listarEmpresas · guardarEmpresa · guardarSucursal · hayDatos<small>db.js:388-795</small></td><td>Leen y guardan razones sociales y sucursales.</td></tr>
+    <tr><td class="f">docsSisgen · documentoConSucursal · docsSisgenDeTipo · conteoSisgenPorTipo<small>db.js:413-738</small></td><td>Consultan los documentos de Sisgen de un mes (todos, uno, un tipo o cantidades).</td></tr>
+    <tr><td class="f">reemplazarDocsSisgen<small>db.js:463</small></td><td>Reemplaza los documentos de una sucursal y mes con lo recién leído, sin perder los que llegaron en línea desde el agente.</td></tr>
+    <tr><td class="f">docsSii · guardarDocsSii · resumenSii · sincronizacionSii · guardarSincronizacionRcv<small>db.js:435-777</small></td><td>Guardan y consultan lo que dice el SII: detalle por documento, resumen por tipo y fecha de la última consulta.</td></tr>
+    <tr><td class="f">boletasSospechosas · boletasConProblemaApi<small>db.js:520-749</small></td><td>Boletas a revisar una a una en la API de boletas (sin XML, en blanco o con problemas anteriores).</td></tr>
+    <tr><td class="f">huellaDatos · sucursalesConLectura<small>db.js:530-545</small></td><td>Indican si los datos cambiaron (para no recalcular) y cuándo se leyó cada sucursal.</td></tr>
+    <tr><td class="f">reemplazarXmlOtrosMeses · xmlOtrosMeses · registradosEnOtroMes · registradosEnSuMes · enBlancoConSiiEnSuMes<small>db.js:565-688</small></td><td>Casos de documentos de un mes con XML en otro mes: evitan marcar como “en blanco” o “sin XML” algo que está registrado en el mes vecino.</td></tr>
+    <tr><td class="f">guardarRespaldos · respaldosDocumentos · respaldoDocumento · blancosSinRespaldo<small>db.js:586-635</small></td><td>Lo encontrado en backup/DT para documentos en blanco, y cuáles faltan por buscar.</td></tr>
+    <tr><td class="f">enviosSii<small>db.js:645</small></td><td>Track ID y respuesta del SII de cada envío, según DTESERVICE.</td></tr>
+    <tr><td class="f">reemplazarRangosCaf · rangosCaf · ultimoFolioUsado<small>db.js:697-723</small></td><td>Rangos de CAF de cada sucursal y el mayor folio usado dentro de un rango.</td></tr>
+    <tr><td class="f">reemplazarFoliosExternos · foliosExternos<small>db.js:760-772</small></td><td>Bloques de boletas emitidas fuera de Sisgen detectados en el SII.</td></tr>
+    <tr><td class="f">comprasPeriodo<small>db.js:350</small></td><td>Compras (documentos de proveedores) de un mes.</td></tr>
+  </table>
+
+  <h3>B.b · Usuarios, claves y sesiones <span class="arch">server\usuarios.js · lib\auth\claves.js · routes\auth.js</span></h3>
+  <table>
+    <tr><td class="f">hashClave · verificarClave<small>claves.js:7-13</small></td><td>Guardan la contraseña como huella (scrypt), nunca en texto, y la comprueban al ingresar.</td></tr>
+    <tr><td class="f">problemaClave · claveTemporal<small>claves.js:23-32</small></td><td>Reglas de una clave nueva (8 caracteres, letras y números) y creación de claves temporales sin caracteres confusos.</td></tr>
+    <tr><td class="f">tokenSesion · hashToken<small>claves.js:41-42</small></td><td>Crean el código de sesión al azar y su huella.</td></tr>
+    <tr><td class="f">guardarCliente · buscarCliente · listarClientes · actualizarCliente · asignarEmpresasACliente · asignarEmpresa<small>usuarios.js:13-76</small></td><td>Clientes del portal (grupos de razones sociales) y qué razones sociales tiene cada uno.</td></tr>
+    <tr><td class="f">crearUsuario · buscarUsuario · listarUsuarios · actualizarUsuario · usuarioPorId · activarUsuario · fijarClave<small>usuarios.js:42-135</small></td><td>Alta, búsqueda, cambio, activación y clave de usuarios. Al fijar clave o desactivar se cierran sus sesiones.</td></tr>
+    <tr><td class="f">listarEmpresasAdmin · listarUsuariosAdmin · adminsActivos · listarIngresos · hayUsuarios<small>usuarios.js:80-122</small></td><td>Listas para el panel de administración y el registro de ingresos.</td></tr>
+    <tr><td class="f">iniciarSesion · registrarIngreso<small>usuarios.js:143-152</small></td><td>Valida usuario y clave, bloquea la cuenta tras varios intentos fallidos y anota cada intento. No revela si el usuario existe.</td></tr>
+    <tr><td class="f">usuarioDeSesion · cerrarSesion · cambiarClavePropia · usuarioPublico<small>usuarios.js:190-225</small></td><td>Reconocen la sesión (y la renuevan), la cierran, cambian la clave propia y entregan los datos del usuario sin información sensible.</td></tr>
+    <tr><td class="f">rutsPermitidos · puedeVer<small>usuarios.js:235-243</small></td><td>Qué razones sociales puede ver cada usuario. Un administrador de Sisgen ve todas.</td></tr>
+    <tr><td class="f">leerCookie · fijarCookie · requiereSesion · requiereAdmin · ipFrenada · anotarFallo<small>routes\auth.js:8-51</small></td><td>La sesión viaja en una cookie protegida. Exigen sesión o rol de administrador y frenan una IP con muchos fallos seguidos.</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">B.c · Recepción de lo que envían los agentes <span class="arch">server\agentes.js · correcciones.js · actualizaciones.js · lib\sii\remoto.js</span></h3>
+  <table>
+    <tr><td class="f">generarLlaveAgente · generarLlaveInstalacion<small>agentes.js:18-33</small></td><td>Crean la llave de una sucursal o una llave de instalación para un cliente. Se muestran una sola vez y se guardan como huella.</td></tr>
+    <tr><td class="f">vincularAgente · sucursalParecida<small>agentes.js:49-79</small></td><td>La primera vez que un agente se conecta, lo asocia a su razón social y sucursal según su empres.dbf. Si ya existe una sucursal con nombre parecido (importada por red), la reutiliza. Rechaza si el RUT no coincide.</td></tr>
+    <tr><td class="f">agentePorLlave · activarAgente · estadoAgente<small>agentes.js:88-124</small></td><td>Reconocen al agente por su llave, lo activan o desactivan y entregan su estado.</td></tr>
+    <tr><td class="f">registrarContacto · anotarCertificadoAgente · anotarVentasMesAgente · registrarHistorial<small>agentes.js:103-376</small></td><td>Anotan cada saludo: última conexión, versión, equipo, error, estado del certificado, último mes de ventas y avance del historial.</td></tr>
+    <tr><td class="f">guardarTrazas<small>agentes.js:139</small></td><td>Guarda el seguimiento de envío al SII y crea en línea los documentos que aún no estaban.</td></tr>
+    <tr><td class="f">datosDte · separarDtes · guardarXml · xmlGuardado<small>agentes.js:175-369</small></td><td>Leen los datos básicos de un XML, separan sobres con varios documentos, guardan los XML recibidos (rechazan los de otra razón social) y los entregan cuando se piden.</td></tr>
+    <tr><td class="f">guardarCompras<small>agentes.js:307</small></td><td>Guarda solo los documentos de proveedores cuyo receptor es la razón social del agente; ignora acuses y otros archivos.</td></tr>
+    <tr><td class="f">guardarDatosImpresion<small>agentes.js:381</small></td><td>Guarda la oficina SII y la resolución para imprimir PDF.</td></tr>
+    <tr><td class="f">importarMes · indiceXml<small>agentes.js:395-411</small></td><td>Importa el paquete de ventas de un mes enviado por el agente, con la misma lógica que la lectura por red, más los rangos CAF.</td></tr>
+    <tr><td class="f">registrarCorreccion · mesesUrgentes · mesRecibido · programar<small>correcciones.js:17-44</small></td><td>Cuando llega un documento corregido, pide al agente el mes de inmediato y luego consulta al SII ese mes, para verlo aceptado en minutos.</td></tr>
+    <tr><td class="f">compararVersiones · versionPublicada · actualizacionPara · archivoActualizacion<small>actualizaciones.js:12-37</small></td><td>Deciden si a un agente le corresponde la versión publicada (más nueva, firmada y habilitada para él) y entregan el archivo.</td></tr>
+    <tr><td class="f">pedir · agenteEspera · agenteResponde · entregar · cola<small>lib\sii\remoto.js:13-71</small></td><td>Cola de consultas al SII por RUT: el portal deja un pedido; el agente lo recoge (espera hasta 25 s), lo ejecuta y responde. Solo acepta respuestas del mismo RUT.</td></tr>
+    <tr><td class="f">agenteDisponible · estadoCertificado<small>remoto.js:19-24</small></td><td>Indican si el agente de un RUT está conectado (último minuto) y con certificado “ok”.</td></tr>
+  </table>
+
+  <h3>B.d · Motor de cuadratura y resúmenes <span class="arch">server\lib\cuadratura\motor.js · resumen.js</span></h3>
+  <table>
+    <tr><td class="f">cuadrar<small>motor.js:47</small></td><td>El corazón de la cuadratura. Cruza cada documento de Sisgen con el SII y le da un estado: OK, falta en el SII, rechazado, en blanco, sin XML, folio de otra sucursal, solo en el SII… Genera alertas, cuadra boletas por resumen, totales por tipo y resumen por sucursal.</td></tr>
+    <tr><td class="f">respuestaEnvio<small>motor.js:36</small></td><td>Interpreta la respuesta del SII a un envío (aceptado, rechazado, con reparos) según DTESERVICE.</td></tr>
+    <tr><td class="f">duenoDelFolio · infoCaf<small>motor.js:55-523</small></td><td>Según los CAF, a qué sucursal pertenece un folio. Así se detecta el uso de folios de otra sucursal.</td></tr>
+    <tr><td class="f">paraRepublicar · republicar<small>motor.js:183-186</small></td><td>Marca los documentos completos en Sisgen que no llegaron al SII y se pueden republicar, con lo que llevaban.</td></tr>
+    <tr><td class="f">cuadrarPorResumen<small>motor.js:355</small></td><td>Boletas: el SII solo da el total del mes. Compara cantidad y monto; si no calzan, prueba descontando los documentos sin XML.</td></tr>
+    <tr><td class="f">alertasFoliosExternos<small>motor.js:412</small></td><td>Si el SII tiene más boletas que Sisgen y se encontraron folios fuera de los CAF, alerta de otro equipo emitiendo con el RUT.</td></tr>
+    <tr><td class="f">cuadreDetalle · resumir · agruparPorDocumento · tramos · sumar · fmt · fmtN<small>motor.js:314-530</small></td><td>Totales Sisgen vs SII por tipo, conteos por estado y sucursal, alertas agrupadas por documento, folios seguidos agrupados en tramos y formato de montos.</td></tr>
+    <tr><td class="f">calcularCuadratura<small>resumen.js:12</small></td><td>Reúne todo para una razón social y mes: documentos, SII, CAF, respaldos, vencimientos, y llama a <code>cuadrar</code>.</td></tr>
+    <tr><td class="f">ajustarOtrosMeses<small>resumen.js:49</small></td><td>Corrige documentos con XML regenerado en otro mes.</td></tr>
+    <tr><td class="f">resumenPeriodo · estadoEmpresa · gravedadEmpresa<small>resumen.js:66-96</small></td><td>Cifras del mes por razón social (guardadas en memoria mientras los datos no cambien) y su gravedad: sin datos, sin consulta al SII, con alertas o al día.</td></tr>
+    <tr><td class="f">sucursalesEstado · filaCliente · numeroRut<small>resumen.js:106-124</small></td><td>Estado de cada sucursal (desactualizada si pasaron más de 48 h), fila resumen de un cliente y orden por RUT.</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">B.e · Conexión con el SII <span class="arch">server\lib\sii\</span></h3>
+  <table>
+    <tr><td class="f">obtenerSemilla · firmarSemilla · obtenerToken · soap<small>autenticacion.js:26-101</small></td><td>Inicio de sesión en el SII con certificado: semilla, firma XML y token. Producción en palena, certificación en maullin.</td></tr>
+    <tr><td class="f">cargarCertificado<small>certificado.js:18</small></td><td>Abre el .pfx (incluso con cifrado antiguo) y entrega certificado, clave privada, titular y vigencia.</td></tr>
+    <tr><td class="f">obtenerTokenBoletas · consultarEstadoBoleta · estadoDesdeApi<small>boletas.js:14-55</small></td><td>API oficial de boletas: token, estado de una boleta y traducción del código (DOK aceptada, FAU no recibida, FAN anulada, otros con reparo).</td></tr>
+    <tr><td class="f">rcvResumenVentas · rcvDetalleVentas · llamar · revisarRcv · mapearResumen · mapearDetalle · base<small>rcv.js:23-99</small></td><td>Registro de Ventas: totales por tipo y documentos uno a uno, con reintentos y revisión de errores.</td></tr>
+    <tr><td class="f">clienteLocal · clienteRemoto · rcvRemoto<small>clientes.js:10-41</small></td><td>Misma forma de consultar con el certificado del equipo del portal (local) o a través del agente del cliente (remoto).</td></tr>
+    <tr><td class="f">sincronizarEmpresa<small>sincronizar.js:21</small></td><td>Consulta completa de un mes: Registro de Ventas, revisión de boletas (sospechosas y, si no cuadra, todas) y boletas fuera de Sisgen. Guarda todo.</td></tr>
+    <tr><td class="f">verificarBoletas · requiereBarrido<small>verificacionBoletas.js:15-37</small></td><td>Revisan muchas boletas en paralelo (5 a la vez) y deciden si hay que revisar todas las del mes.</td></tr>
+    <tr><td class="f">huecosCaf · detectarFoliosExternos · existenciaDesdeCodigo<small>foliosExternos.js:20-53</small></td><td>Buscan en los huecos entre CAF conocidos folios que el SII recibió: señal de boletas emitidas fuera de Sisgen.</td></tr>
+    <tr><td class="f">vencimientoCaf · mesesACuadrar<small>vigenciaCaf.js:18-30</small></td><td>Vencimiento de un CAF (180 días para 33, 56 y 61) y cuántos meses atrás cuadrar (máximo 7).</td></tr>
+    <tr><td class="f">marcarFoliosVencidos · marcarDocumentosVencidos · alertasVencimiento<small>vigenciaCaf.js:51-90</small></td><td>Marcan documentos no recibidos con CAF vencido (hay que anular) y avisan rangos por vencer con folios sin usar.</td></tr>
+    <tr><td class="f">index.js (consultarEstadoDte, consultarEstadoEnvio…)<small>lib\sii\index.js</small></td><td>Funciones previstas para una fase posterior; hoy avisan que están pendientes.</td></tr>
+  </table>
+
+  <h3>B.f · Lectura de Sisgen por red <span class="arch">server\lib\sisgen\</span></h3>
+  <table>
+    <tr><td class="f">leerEstructura · leerRegistros · leerRegistrosDesdeElFinal · decodificar · leerMemo · buscarArchivo<small>dbf.js:12-183</small></td><td>Lector de tablas DBF en JavaScript (solo lectura), igual que el del agente. Puede leer desde el final para tablas que guardan todos los años.</td></tr>
+    <tr><td class="f">leerEmpresa · leerVentasMes · leerDetalleMes · leerClidoctoMes · leerClipagosMes<small>importar.js:10-109</small></td><td>Leen empresa, F1, F2, CLIDOCTO y CLIPAGOS de un mes.</td></tr>
+    <tr><td class="f">consolidar<small>importar.js:133</small></td><td>Junta todas las fuentes y decide qué documentos quedaron “en blanco” (sin completar en F1/F2).</td></tr>
+    <tr><td class="f">leerIndiceXml · leerDatosXml · leerDocumentosMes · leerCafs<small>importar.js:212-294</small></td><td>Índice de XML por nombre de archivo, datos de un XML, lectura completa de un mes en una sucursal y rangos de CAF.</td></tr>
+    <tr><td class="f">carpetaMes · periodoVecino · normalizarRut<small>importar.js:197-321</small></td><td>Ayudantes: <code>2026-10</code> → <code>2610</code>, mes anterior o siguiente, RUT en formato único.</td></tr>
+    <tr><td class="f">carpetaRespaldo · buscarEnRespaldo · buscarEnDt · buscarDetalleBlancos · armarRespaldo · armarDesdeDt · documentoDeCodmat<small>respaldo.js:12-140</small></td><td>Buscan lo que llevaba un documento en blanco en la carpeta backup y, si no, en la tabla DT del mes.</td></tr>
+    <tr><td class="f">tipoSii<small>tipos.js:39</small></td><td>Convierte el tipo Sisgen (BE, FE…) en el código SII (39, 33…).</td></tr>
+  </table>
+
+  <h3>B.g · XML y PDF de documentos <span class="arch">server\lib\documentos\</span></h3>
+  <table>
+    <tr><td class="f">rutasXml · elegirXml · rutaTimbre · listar<small>archivos.js:13-58</small></td><td>Encuentran los XML de un documento (puede haber reintentos), eligen el más reciente que traiga detalle y ubican el timbre.</td></tr>
+    <tr><td class="f">extrasSucursal · detalleDesdeF2 · memo<small>extras.js:13-51</small></td><td>Logo, oficina SII y resolución de la sucursal, y líneas de detalle desde F2 si el XML no las trae.</td></tr>
+    <tr><td class="f">generarPdf · leerDte<small>pdf.js:55-117</small></td><td>Arman el PDF con el formato de Sisgen: carta para facturas, notas y guías; térmico de 72 mm para boletas. El timbre se dibuja desde el XML.</td></tr>
+    <tr><td class="f">pdfCarta · pdfTermico · dibujarTermico · timbrePng y ayudantes<small>pdf.js:43-300</small></td><td>Dibujan cada parte: encabezado, cliente, tabla de detalle, totales y timbre.</td></tr>
+    <tr><td class="f">prepararDocumento · hiloDe · descartar<small>servicio.js:21-54</small></td><td>Preparan XML y PDF en un hilo por sucursal con tiempo máximo: si la red de una sucursal se cuelga, el resto del portal sigue.</td></tr>
+  </table>
+
+  <h3>B.h · Tareas automáticas <span class="arch">server\programador.js</span></h3>
+  <table>
+    <tr><td class="f">iniciarProgramador · tick<small>programador.js:126-151</small></td><td>Primera revisión a los 2 min y luego cada 15 min, una tarea a la vez.</td></tr>
+    <tr><td class="f">consultarSii · consultarEmpresa · periodosRecientes<small>programador.js:24-61</small></td><td>Consultan al SII el mes en curso (y el anterior los primeros 10 días). De noche, todos los meses que se cuadran. Usan el agente si está conectado.</td></tr>
+    <tr><td class="f">consultarMesesAntiguos · consultarPeriodo · consultarAhora<small>programador.js:77-103</small></td><td>Meses antiguos nunca consultados (de a pocos), un mes tras una corrección, y todo al conectarse un agente por primera vez.</td></tr>
+    <tr><td class="f">importarPorRed · correr · log<small>programador.js:30-111</small></td><td>Reimportan por red las sucursales sin agente y ejecutan scripts auxiliares.</td></tr>
+  </table>
+</section>
+
+<section class="parte">
+  <h3 style="margin-top:0">B.i · Direcciones de la API (rutas) <span class="arch">server\routes\</span></h3>
+  <p>Cada ruta es una “ventanilla” del servidor. <b>GET</b> = pedir datos; <b>POST</b> = enviar datos o pedir una acción; <b>PATCH/PUT</b> = cambiar algo.</p>
+  <table>
+    <tr><th>Ruta</th><th>Qué hace</th></tr>
+    <tr><td class="f">POST /api/auth/login · /logout<small>auth.js:59-80</small></td><td>Iniciar y cerrar sesión.</td></tr>
+    <tr><td class="f">GET /api/auth/yo · POST /cambiar-clave<small>auth.js:86-88</small></td><td>Quién soy, y cambio de clave propia.</td></tr>
+    <tr><td class="f">GET /api/empresas · /inicio<small>api.js:29-54</small></td><td>Razones sociales que puede ver el usuario y datos de la pantalla de inicio.</td></tr>
+    <tr><td class="f">GET /api/cuadratura/:rut/:periodo<small>api.js:32</small></td><td>Cuadratura completa de una razón social y mes.</td></tr>
+    <tr><td class="f">GET /api/respaldo/:rut/:tipo/:folio<small>api.js:40</small></td><td>Lo que llevaba un documento en blanco.</td></tr>
+    <tr><td class="f">GET /api/buscar/:rut<small>api.js:67</small></td><td>Búsqueda en todo el historial de documentos.</td></tr>
+    <tr><td class="f">GET /api/compras/… · /compra/…<small>api.js:108-116</small></td><td>Compras del mes, y XML o PDF de una compra.</td></tr>
+    <tr><td class="f">GET /api/documento/:rut/:tipo/:folio/:formato<small>api.js:145</small></td><td>Descarga el XML o el PDF de un documento.</td></tr>
+    <tr><td class="f">POST /api/agente/hola<small>agente.js:48</small></td><td>Saludo del agente: lo registra y le responde con instrucciones.</td></tr>
+    <tr><td class="f">POST /api/agente/trazas · /xml · /mes · /compras · /respaldo · /diagnostico<small>agente.js:85-176</small></td><td>Lo que envía el agente: seguimiento, XML, ventas del mes, compras, documentos en blanco y diagnósticos.</td></tr>
+    <tr><td class="f">POST /api/agente/consultas/esperar · /resultado<small>agente.js:160-171</small></td><td>El agente espera consultas al SII y devuelve resultados.</td></tr>
+    <tr><td class="f">POST /api/agente/actualizacion<small>agente.js:70</small></td><td>Descarga de la versión nueva del agente.</td></tr>
+    <tr><td class="f">GET /api/admin/datos · /tabla · /razones · /agentes · /ingresos<small>admin.js:24-172</small></td><td>Datos del panel de administración: clientes, tabla de trabajo, razones sociales, agentes instalados y registro de ingresos.</td></tr>
+    <tr><td class="f">GET /api/admin/clientes/:id/ficha<small>admin.js:150</small></td><td>Ficha completa de un cliente.</td></tr>
+    <tr><td class="f">POST/GET /api/admin/empresas/:rut/consultar-sii<small>admin.js:63-81</small></td><td>Consultar al SII ahora y ver su avance.</td></tr>
+    <tr><td class="f">POST/PATCH /api/admin/sucursales/:id/agente · POST /clientes/:id/llave-instalacion<small>admin.js:92-108</small></td><td>Generar llaves de agente o de instalación y activar o desactivar un agente.</td></tr>
+    <tr><td class="f">POST/PATCH clientes y usuarios · PUT empresas/:rut/cliente · POST usuarios/:id/restablecer<small>admin.js:175-234</small></td><td>Crear y cambiar clientes y usuarios, asignar razones sociales y dar una clave temporal nueva.</td></tr>
+  </table>
+</section>
+
+<!-- ===================================================== PARTE C -->
+<section class="parte">
+  <div class="etq">Parte C</div>
+  <h2>Pantallas del portal</h2>
+  <p class="intro">Carpeta <code>client\src\</code>. Cada archivo <code>.jsx</code> es una pantalla o una parte de pantalla (“componente”).</p>
+  <table>
+    <tr><td class="f">App<small>App.jsx:9</small></td><td>Puerta de entrada: sin sesión muestra el ingreso; con clave temporal obliga a cambiarla; si no, abre el portal.</td></tr>
+    <tr><td class="f">Login<small>Login.jsx:5</small></td><td>Pantalla de ingreso con usuario y clave.</td></tr>
+    <tr><td class="f">CambiarClave<small>CambiarClave.jsx:6</small></td><td>Cambio de contraseña (obligatorio la primera vez).</td></tr>
+    <tr><td class="f">Portal<small>Portal.jsx:22</small></td><td>Estructura general: menú a la izquierda, ruta de navegación (Inicio › Cliente › Razón social), botón Atrás del navegador y vista por sucursal. <code>cargarEmpresas</code>, <code>ir</code>, <code>abrir</code>, <code>volver</code> y <code>BotonMenu</code> manejan la navegación.</td></tr>
+    <tr><td class="f">Inicio · TarjetaEmpresa · Kpi<small>Inicio.jsx:6-88</small></td><td>Inicio del cliente: una tarjeta por razón social con el porcentaje OK y su estado.</td></tr>
+    <tr><td class="f">TablaClientes<small>TablaClientes.jsx:21</small></td><td>Inicio del equipo Sisgen: lista de razones sociales con búsqueda y columnas ordenables (recuerda el orden en el navegador).</td></tr>
+    <tr><td class="f">QueRevisar<small>QueRevisar.jsx:6</small></td><td>Razones sociales con algo por revisar, de lo más urgente a lo menos.</td></tr>
+    <tr><td class="f">FichaCliente · RazonSocial · ConsultarSii · EstadoAgente<small>FichaCliente.jsx:6-231</small></td><td>Ficha de un cliente: razones sociales, sucursales, estado del agente, usuarios, botón para consultar al SII ahora y generación de llaves.</td></tr>
+    <tr><td class="f">Resumen<small>Resumen.jsx:13</small></td><td>Resumen del mes al estilo del RCV: una fila por tipo de documento con sus montos.</td></tr>
+    <tr><td class="f">Documentos · Detalle · BotonesArchivo · cumpleEstado · folioAjeno · urlArchivo<small>Documentos.jsx:8-191</small></td><td>Lista de documentos del mes con filtros (sucursal, tipo, estado), detalle Sisgen vs SII, botones XML/PDF y exportación a CSV.</td></tr>
+    <tr><td class="f">Alertas · fraseAlerta · documentoAlerta<small>Alertas.jsx:9-41</small></td><td>Lista de alertas con una frase simple de qué pasa y a qué documento corresponde.</td></tr>
+    <tr><td class="f">BuscarDocumentos<small>BuscarDocumentos.jsx:8</small></td><td>Búsqueda en todo el historial con descarga de XML y PDF.</td></tr>
+    <tr><td class="f">Compras<small>Compras.jsx:10</small></td><td>Documentos recibidos de proveedores en el mes.</td></tr>
+    <tr><td class="f">DocumentoEnBlanco<small>DocumentoEnBlanco.jsx:11</small></td><td>Página con lo que llevaba un documento en blanco según el backup.</td></tr>
+    <tr><td class="f">Agentes<small>Agentes.jsx:5</small></td><td>Todos los agentes instalados: en línea (último contacto en 5 min) o sin ventas del mes.</td></tr>
+    <tr><td class="f">Admin · Usuarios · Clientes · Empresas · Ingresos<small>Admin.jsx:7-328</small></td><td>Panel de administración con pestañas para usuarios, clientes, razones sociales y registro de ingresos.</td></tr>
+    <tr><td class="f">SelectorMes<small>SelectorMes.jsx:10</small></td><td>Selector de mes tipo calendario; solo deja elegir meses con datos.</td></tr>
+    <tr><td class="f">Icono<small>Iconos.jsx:16</small></td><td>Íconos simples del menú.</td></tr>
+    <tr><td class="f">api<small>util.js:47</small></td><td>Toda llamada al servidor pasa por aquí; si la sesión venció, vuelve al ingreso.</td></tr>
+    <tr><td class="f">pesos · numero · nombrePeriodo · fecha · formatoRut · numeroRut · haceCuanto · descargarCsv<small>util.js:1-83</small></td><td>Formatos: <code>$12.345</code>, “Noviembre 2026”, <code>20-11-2026</code>, <code>78.052.969-5</code>, “hace 5 min”, y descarga de CSV.</td></tr>
+    <tr><td class="f">marca.js · tiposDocumento.js<small>client\src</small></td><td>Nombre y textos del portal en un solo lugar, y nombres de los tipos de documento.</td></tr>
+  </table>
+
+  <div class="etq" style="margin-top:18px">Parte E</div>
+  <h2>Pruebas automáticas del agente</h2>
+  <p class="intro">Carpeta <code>agente\pruebas\</code>. Se ejecutan solas cada vez que se compila (<code>compilar.bat</code>); si alguna falla, <b>no se genera el instalador</b>.</p>
+  <table>
+    <tr><td class="f">casos\<small>pruebas\casos</small></td><td>Índices <code>folios.dbf</code> + <code>folios.cdx</code> reales de clientes, con todos los datos en blanco salvo el tipo de documento: el formato chico de JULIO CESAR (tipo 7, 14 CAF), dos clientes con 81 y 95 CAF, y la copia de prueba.</td></tr>
+    <tr><td class="f">Pruebas.Main<small>PruebasAgente.cs</small></td><td>Por cada caso agrega 200 CAF con el mismo código del agente y, después de cada uno, revisa el índice con un lector propio de las pruebas (independiente del agente). Cubre el formato chico, el cambio al formato grande y los índices de varias páginas.</td></tr>
+    <tr><td class="f">Verificar · LeerHoja<small>PruebasAgente.cs</small></td><td>El lector independiente: recorre el árbol del índice, revisa que las páginas estén bien enlazadas y que cada clave coincida con la tabla.</td></tr>
+    <tr><td class="f">anonimizar.py</td><td>Crea un caso nuevo a partir de las tablas de un cliente, dejando en blanco todos los datos menos el tipo de documento.</td></tr>
+  </table>
+
+  <div class="etq" style="margin-top:18px">Parte D</div>
+  <h2>Scripts de administración</h2>
+  <p class="intro">Carpeta <code>scripts\</code>. Programas que se ejecutan a mano en la consola (<code>node scripts\…</code> o <code>npm run …</code>).</p>
+  <table>
+    <tr><td class="f">agregar-sucursal.js</td><td>Agrega una sucursal desde su ruta de red: lee empres.dbf, la crea o la agrega a su razón social, revisa el certificado, la importa y la consulta al SII.</td></tr>
+    <tr><td class="f">importar-sisgen.js</td><td>Importa las ventas de un mes de todas las sucursales configuradas (las con agente se omiten).</td></tr>
+    <tr><td class="f">sincronizar-sii.js</td><td>Consulta al SII un mes con los certificados del equipo.</td></tr>
+    <tr><td class="f">usuarios.js</td><td>Crear clientes y usuarios, restablecer claves, activar o desactivar. Las claves temporales van a un archivo, no a la pantalla.</td></tr>
+    <tr><td class="f">publicar-agente.js</td><td>Firma y publica una versión del agente para que se actualice sola (a algunos agentes o a todos) y muestra qué versión tiene cada uno.</td></tr>
+    <tr><td class="f">unir-sucursales.js</td><td>Une una sucursal duplicada en otra de la misma razón social.</td></tr>
+    <tr><td class="f">empaquetar-vps.js · respaldar-base.js</td><td>Paquete de datos para instalar el portal en el VPS (sin certificados ni claves) y respaldo diario de la base de datos (guarda 14 días).</td></tr>
+    <tr><td class="f">probar-sii.js · probar-boletas.js · probar-sucursal.js · validar-certificado.js</td><td>Pruebas de solo lectura: inicio de sesión en el SII, estado de boletas puntuales, acceso a una carpeta de sucursal y que la clave abra el certificado.</td></tr>
+    <tr><td class="f">inspeccionar-dbf.js · inspeccionar-frx.js</td><td>Muestran la estructura de una tabla DBF o la diagramación de un formato de impresión de Sisgen.</td></tr>
+  </table>
+</section>
+
+</body></html>

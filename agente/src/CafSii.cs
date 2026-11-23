@@ -23,7 +23,7 @@ namespace SisgenAgente
         public Dictionary<string, string> Formulario;
     }
 
-    public class CafSii
+    public class CafSii : IDisposable
     {
         public static bool SoloCertificacion = true;
         static readonly Encoding Latin = Encoding.GetEncoding(28591);
@@ -64,12 +64,38 @@ namespace SisgenAgente
             cert = sii.CertificadoTls();
             galletas = new CookieContainer();
             string destino = "https://" + Host + "/cvc_cgi/dte/of_solicita_folios";
-            Post("https://herculesr.sii.cl/cgi_AUT2000/CAutInicio.cgi?" + destino, "referencia=" + Uri.EscapeDataString(destino));
+            string pagina = Post("https://herculesr.sii.cl/cgi_AUT2000/CAutInicio.cgi?" + destino, "referencia=" + Uri.EscapeDataString(destino));
             if (galletas.GetCookies(new Uri("https://" + Host + "/")).Count == 0 || galletas.GetCookies(new Uri("https://" + Host + "/"))["TOKEN"] == null)
             {
                 galletas = null;
-                throw new Exception("El SII no aceptó el certificado (" + sii.EstadoCertificado + ")");
+                // Se guarda la página que respondió el SII (para saber el motivo real) y se incluye su texto en el error
+                Guardar(Path.Combine(Program.Carpeta, "logs"), "sii_login_rechazado.html", pagina);
+                string motivo = Texto(pagina);
+                motivo = Regex.Replace(motivo, @"var msg = '.*?';", "");
+                if (motivo.Length > 300) motivo = motivo.Substring(0, 300) + "…";
+                throw new Exception("El SII no dejó entrar con el certificado (" + sii.EstadoCertificado + "). Respuesta del SII: «" + motivo + "»");
             }
+        }
+
+        /// <summary>
+        /// Cierra la sesión en el SII ("Cerrar Sesión" del sitio). El SII permite máximo 10 sesiones abiertas por persona,
+        /// así que el agente no debe dejar ninguna abierta: si no, las demás sucursales y el navegador no pueden entrar.
+        /// </summary>
+        public void Salir()
+        {
+            if (galletas == null) return;
+            try { PostBytes("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", null); }
+            catch (Exception e) { Log.Error("Folios: no se pudo cerrar la sesión del SII: " + e.Message); }
+            galletas = null;
+        }
+
+        public void Dispose() { Salir(); }
+
+        /// <summary>Solo entra al SII con el certificado y vuelve a salir (prueba; no consulta ni pide folios).</summary>
+        public void ProbarEntrada()
+        {
+            Entrar();
+            Salir();
         }
 
         /// <summary>Pregunta al SII qué rango entregaría. No genera folios.</summary>
@@ -158,15 +184,18 @@ namespace SisgenAgente
         byte[] PostBytes(string url, string cuerpo)
         {
             var r = (HttpWebRequest)WebRequest.Create(url);
-            r.Method = "POST";
+            r.Method = cuerpo == null ? "GET" : "POST";
             r.CookieContainer = galletas;
             r.UserAgent = "Mozilla/5.0 (SisgenAgente)";
             r.Timeout = r.ReadWriteTimeout = 120000;
             r.ClientCertificates.Add(cert);
-            r.ContentType = "application/x-www-form-urlencoded";
-            byte[] b = Latin.GetBytes(cuerpo);
-            r.ContentLength = b.Length;
-            using (var s = r.GetRequestStream()) s.Write(b, 0, b.Length);
+            if (cuerpo != null)
+            {
+                r.ContentType = "application/x-www-form-urlencoded";
+                byte[] b = Latin.GetBytes(cuerpo);
+                r.ContentLength = b.Length;
+                using (var s = r.GetRequestStream()) s.Write(b, 0, b.Length);
+            }
             HttpWebResponse resp;
             try { resp = (HttpWebResponse)r.GetResponse(); }
             catch (WebException e)

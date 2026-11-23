@@ -1,4 +1,4 @@
-// Agente Sisgen: servicio de Windows que envía al Portal Sisgen cada documento emitido por la sucursal
+﻿// Agente Sisgen: servicio de Windows que envía al Portal Sisgen cada documento emitido por la sucursal
 // (XML) y su seguimiento de envío al SII (tablas trazadte / trazabol de DTESERVICE).
 //
 //   SisgenAgente.exe              -> se ejecuta como servicio de Windows (instalar con instalar.bat)
@@ -17,7 +17,7 @@ namespace SisgenAgente
 {
     public static class Program
     {
-        public const string Version = "1.7.0";
+        public const string Version = "1.7.8";
         public static readonly string Carpeta = AppDomain.CurrentDomain.BaseDirectory;
 
         public static int Main(string[] args)
@@ -36,6 +36,14 @@ namespace SisgenAgente
                 }
                 catch (Exception e) { Console.WriteLine("Error: " + e.Message); return 1; }
             }
+            // Revisión de un cliente antes de activar folios (solo lee): SisgenAgente.exe --revisar C:\sisgen
+            int iRev = Array.FindIndex(args, a => a.Equals("--revisar", StringComparison.OrdinalIgnoreCase));
+            if (iRev >= 0 && iRev + 1 < args.Length)
+            {
+                var res = RevisionCliente.Revisar(args[iRev + 1].TrimEnd('\\'));
+                foreach (var r in res) Console.WriteLine(r);
+                return res.All(r => r.Ok) ? 0 : 1;
+            }
             // Folios al SII (solo certificación): SisgenAgente.exe --caf C:\sisgen2 39 10 [--pedir]
             // Sin --pedir solo muestra el rango que entregaría el SII. Con --pedir lo genera y deja el XML en caf\<carpeta>\.
             int iCaf = Array.FindIndex(args, a => a.Equals("--caf", StringComparison.OrdinalIgnoreCase));
@@ -47,7 +55,7 @@ namespace SisgenAgente
                     string sisgen = args[iCaf + 1].TrimEnd('\\');
                     int tipo = int.Parse(args[iCaf + 2]), cantidad = int.Parse(args[iCaf + 3]);
                     bool pedir = args.Any(a => a.Equals("--pedir", StringComparison.OrdinalIgnoreCase));
-                    var caf = new CafSii(sisgen);
+                    using (var caf = new CafSii(sisgen)) {
                     Console.WriteLine("Empresa " + caf.RutNumero + "-" + caf.RutDv + " en " + caf.Host);
                     var p = caf.Consultar(tipo, cantidad);
                     Console.WriteLine("Certificado: " + caf.EstadoCertificado);
@@ -57,6 +65,7 @@ namespace SisgenAgente
                     string archivo = caf.Pedir(p, cola);
                     Console.WriteLine("CAF guardado: " + archivo);
                     return 0;
+                    }
                 }
                 catch (Exception e) { Console.WriteLine("Error: " + e.Message); return 1; }
             }

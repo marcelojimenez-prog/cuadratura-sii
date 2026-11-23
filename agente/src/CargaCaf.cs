@@ -50,8 +50,7 @@ namespace SisgenAgente
             if (!File.Exists(rCdx)) rCdx = null;
 
             // ---- Respaldo ----
-            string respaldo = Path.Combine(carpetaRespaldos, Path.GetFileName(carpetaSisgen.TrimEnd('\\')), DateTime.Now.ToString("yyyyMMdd_HHmmss"));
-            Directory.CreateDirectory(respaldo);
+            string respaldo = CarpetaRespaldo(carpetaRespaldos, carpetaSisgen, "");
             var archivos = new List<string> { rFolios, rPrm, rCor };
             if (rCdx != null) archivos.Add(rCdx);
             foreach (var a in archivos) File.Copy(a, Path.Combine(respaldo, Path.GetFileName(a)));
@@ -143,6 +142,7 @@ namespace SisgenAgente
                     try { if (File.Exists(b) && !SonIguales(a, b)) File.Copy(b, a, true); } catch { }
                 }
                 if (xmlCopiado) try { File.Delete(destinoXml); } catch { }
+                BorrarSiNadaCambio(respaldo, archivos);
                 throw;
             }
             finally { foreach (var fs in abiertos) fs.Dispose(); }
@@ -157,8 +157,7 @@ namespace SisgenAgente
         {
             string datos = Path.Combine(carpetaSisgen, "datos");
             string rPrm = Requerido(datos, "prmsis.dbf"), rCor = Requerido(datos, "correlat.dbf");
-            string respaldo = Path.Combine(carpetaRespaldos, Path.GetFileName(carpetaSisgen.TrimEnd('\\')), DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_salto");
-            Directory.CreateDirectory(respaldo);
+            string respaldo = CarpetaRespaldo(carpetaRespaldos, carpetaSisgen, "_salto");
             var archivos = new List<string> { rPrm, rCor };
             foreach (var a in archivos) File.Copy(a, Path.Combine(respaldo, Path.GetFileName(a)));
             var abiertos = new List<FileStream>();
@@ -195,12 +194,34 @@ namespace SisgenAgente
                     string b = Path.Combine(respaldo, Path.GetFileName(a));
                     try { if (File.Exists(b) && !SonIguales(a, b)) File.Copy(b, a, true); } catch { }
                 }
+                BorrarSiNadaCambio(respaldo, archivos);
                 throw;
             }
             finally { foreach (var fs in abiertos) fs.Dispose(); }
         }
 
         static bool SonIguales(string a, string b) { return File.ReadAllBytes(a).SequenceEqual(File.ReadAllBytes(b)); }
+
+        /// <summary>Crea una carpeta de respaldo nueva (fecha y hora con milésimas; nunca reutiliza una existente).</summary>
+        static string CarpetaRespaldo(string carpetaRespaldos, string carpetaSisgen, string sufijo)
+        {
+            string baseDir = Path.Combine(carpetaRespaldos, Path.GetFileName(carpetaSisgen.TrimEnd('\\')));
+            string nombre = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + sufijo, ruta = Path.Combine(baseDir, nombre);
+            for (int i = 2; Directory.Exists(ruta); i++) ruta = Path.Combine(baseDir, nombre + "_" + i);
+            Directory.CreateDirectory(ruta);
+            return ruta;
+        }
+
+        /// <summary>Si la carga falló y las tablas quedaron iguales al respaldo, el respaldo sobra y se borra.</summary>
+        static void BorrarSiNadaCambio(string respaldo, List<string> archivos)
+        {
+            try
+            {
+                if (archivos.All(a => { string b = Path.Combine(respaldo, Path.GetFileName(a)); return !File.Exists(b) || SonIguales(a, b); }))
+                    Directory.Delete(respaldo, true);
+            }
+            catch { }
+        }
         static long Num(string s) { long n; return long.TryParse((s ?? "").Trim(), out n) ? n : 0; }
 
         static string Requerido(string carpeta, string nombre)
@@ -341,9 +362,10 @@ namespace SisgenAgente
     }
 
     /// <summary>
-    /// Índice compuesto de FoxPro (.cdx) con un solo tag de una sola hoja (caso de folios.cdx). Se decodifica la hoja,
-    /// se verifica que corresponde exactamente a la tabla, se agrega la clave del registro nuevo y se vuelve a codificar.
-    /// Si el índice no tiene esa forma simple, no se toca (error).
+    /// Índice compuesto de FoxPro (.cdx) con un solo tag (caso de folios.cdx). Se leen todas sus hojas, se verifica que
+    /// corresponden exactamente a la tabla, se agrega la clave del registro nuevo y se vuelve a armar el árbol completo
+    /// (una o varias hojas, y nodos interiores si hacen falta), reutilizando los mismos nodos del archivo.
+    /// Si el índice no tiene la forma esperada, no se toca (error).
     /// </summary>
     public static class IndiceCdx
     {
@@ -359,29 +381,189 @@ namespace SisgenAgente
             // Directorio de tags (cabecera en 0, raíz hoja con un solo tag)
             int raizDir = BitConverter.ToInt32(b, 0);
             var dir = Decodificar(b, raizDir, BitConverter.ToUInt16(b, 12));
-            if (dir.Attr != 3 || dir.Claves.Count != 1) throw new Exception("Índice con varios tags: no soportado");
+            if ((dir.Attr & 3) != 3 || dir.Claves.Count != 1) throw new Exception("Índice con varios tags: no soportado");
             int cab = (int)dir.Claves[0].Item2;
             int largoClave = BitConverter.ToUInt16(b, cab + 12);
             string expr = Latin.GetString(b, cab + 512, BitConverter.ToUInt16(b, cab + 510)).TrimEnd('\0').Trim();
             if (!expr.Equals(campo, StringComparison.OrdinalIgnoreCase)) throw new Exception("Índice sobre '" + expr + "': no soportado");
             if (BitConverter.ToUInt16(b, cab + 506) > 1) throw new Exception("Índice con filtro: no soportado");
             int raiz = BitConverter.ToInt32(b, cab);
-            var hoja = Decodificar(b, raiz, largoClave);
-            if (hoja.Attr != 3) throw new Exception("Índice de más de una hoja: no soportado");
+
+            // Árbol actual: nodos que ocupa y hojas en orden
+            var nodos = new List<int>();
+            var hojas = new List<Hoja>();
+            Recorrer(b, raiz, largoClave, nodos, hojas, 0);
+            // Marca extra de FoxPro (valor 4) que traen los nodos de este tag: se conserva igual en el árbol nuevo
+            int marca = BitConverter.ToUInt16(b, raiz) & 4;
+            var actuales = hojas.SelectMany(h => h.Claves).ToList();
+
             // Debe corresponder exactamente a la tabla (antes del registro nuevo)
             Func<string, byte[]> clave = v => Latin.GetBytes((v ?? "").PadRight(largoClave).Substring(0, largoClave));
             var esperadas = new List<Tuple<byte[], long>>();
             for (int i = 0; i < tabla.Registros; i++) esperadas.Add(Tuple.Create(clave(tabla.Texto(i, campo)), (long)(i + 1)));
             esperadas.Sort(Comparar);
-            if (!Iguales(hoja.Claves, esperadas)) throw new Exception("El índice no coincide con la tabla (reindexar en Sisgen): no se tocó");
+            if (!Iguales(actuales, esperadas)) throw new Exception("El índice no coincide con la tabla (reindexar en Sisgen): no se tocó");
             esperadas.Add(Tuple.Create(clave(valorNuevo), (long)(tabla.Registros + 1)));
             esperadas.Sort(Comparar);
-            var nodo = Codificar(hoja, esperadas, largoClave);
-            var salida = (byte[])b.Clone();
-            Array.Copy(nodo, 0, salida, raiz, Nodo);
+
+            // Formato de las hojas: el de la hoja que admite números de registro más altos. Si la tabla ya pasó ese tope,
+            // se usa el formato siguiente, igual que FoxPro: bits de duplicados = bits de recortados = los que necesita el largo
+            // de la clave, y el resto de 2, 3 o 4 bytes para el número de registro (p. ej. clave de 10: 2 bytes → hasta 255; 3 → 65.535).
+            var formato = hojas.OrderByDescending(h => h.MascaraRec).First();
+            if (tabla.Registros + 1 > formato.MascaraRec)
+            {
+                int bitsClave = 1;
+                while ((1 << bitsClave) - 1 < largoClave) bitsClave++;
+                Hoja nuevo = null;
+                for (int bytes = 2; bytes <= 4 && nuevo == null; bytes++)
+                {
+                    int bitsRec = bytes * 8 - 2 * bitsClave;
+                    long mascara = (1L << bitsRec) - 1;
+                    if (bitsRec > 0 && mascara >= tabla.Registros + 1)
+                        nuevo = new Hoja { BytesInfo = bytes, BitsRec = bitsRec, BitsDup = bitsClave, BitsTrail = bitsClave, MascaraRec = mascara,
+                                           MascaraDup = (1 << bitsClave) - 1, MascaraTrail = (1 << bitsClave) - 1 };
+                }
+                if (nuevo == null) throw new Exception("Índice: número de registro fuera de rango");
+                formato = nuevo;
+            }
+
+            // Repartir las claves en hojas (se llenan hasta ~90 % para que Sisgen pueda agregar sin dividir)
+            var grupos = new List<List<Tuple<byte[], long>>>();
+            var grupo = new List<Tuple<byte[], long>>();
+            int usado = 0;
+            byte[] previa = null;
+            foreach (var c in esperadas)
+            {
+                int costo = Costo(formato, c.Item1, grupo.Count == 0 ? null : previa, largoClave);
+                if (grupo.Count > 0 && usado + costo > (Nodo - 24) * 9 / 10)
+                {
+                    grupos.Add(grupo); grupo = new List<Tuple<byte[], long>>(); usado = 0;
+                    costo = Costo(formato, c.Item1, null, largoClave);
+                }
+                grupo.Add(c); usado += costo; previa = c.Item1;
+            }
+            grupos.Add(grupo);
+
+            // Niveles: hojas abajo y nodos interiores hasta llegar a una sola raíz
+            int porInterior = (Nodo - 12) / (largoClave + 8);
+            var niveles = new List<int> { grupos.Count };
+            while (niveles[niveles.Count - 1] > 1) niveles.Add((niveles[niveles.Count - 1] + porInterior - 1) / porInterior);
+            int total = niveles.Sum();
+
+            // Posiciones: los nodos que ya usaba este tag y, si faltan, nodos nuevos al final del archivo
+            nodos.Sort();
+            var posiciones = new List<int>(nodos.Take(total));
+            long finArchivo = ((long)b.Length + Nodo - 1) / Nodo * Nodo;
+            while (posiciones.Count < total) { posiciones.Add((int)finArchivo); finArchivo += Nodo; }
+            var salida = new byte[Math.Max(b.Length, finArchivo)];
+            Array.Copy(b, salida, b.Length);
+
+            int k = 0;
+            // Hojas
+            var nivel = new List<Tuple<int, Tuple<byte[], long>>>(); // posición del nodo y su última clave
+            for (int i = 0; i < grupos.Count; i++)
+            {
+                var h = new Hoja { Attr = (grupos.Count == 1 ? 3 : 2) | marca, MascaraRec = formato.MascaraRec, MascaraDup = formato.MascaraDup, MascaraTrail = formato.MascaraTrail,
+                                   BitsRec = formato.BitsRec, BitsDup = formato.BitsDup, BitsTrail = formato.BitsTrail, BytesInfo = formato.BytesInfo };
+                var nodo = Codificar(h, grupos[i], largoClave);
+                Array.Copy(nodo, 0, salida, posiciones[k + i], Nodo);
+                nivel.Add(Tuple.Create(posiciones[k + i], grupos[i][grupos[i].Count - 1]));
+            }
+            Hermanos(salida, nivel.Select(x => x.Item1).ToList());
+            k += grupos.Count;
+            // Nodos interiores: cada entrada = última clave del hijo + su registro + posición del hijo (big-endian)
+            while (nivel.Count > 1)
+            {
+                var arriba = new List<Tuple<int, Tuple<byte[], long>>>();
+                int cuantos = (nivel.Count + porInterior - 1) / porInterior;
+                for (int i = 0; i < cuantos; i++)
+                {
+                    var hijos = nivel.Skip(i * porInterior).Take(porInterior).ToList();
+                    var nodo = new byte[Nodo];
+                    BitConverter.GetBytes((ushort)((cuantos == 1 ? 1 : 0) | marca)).CopyTo(nodo, 0);
+                    BitConverter.GetBytes((ushort)hijos.Count).CopyTo(nodo, 2);
+                    for (int j = 0; j < hijos.Count; j++)
+                    {
+                        int o = 12 + j * (largoClave + 8);
+                        Array.Copy(hijos[j].Item2.Item1, 0, nodo, o, largoClave);
+                        Grande((uint)hijos[j].Item2.Item2).CopyTo(nodo, o + largoClave);
+                        Grande((uint)hijos[j].Item1).CopyTo(nodo, o + largoClave + 4);
+                    }
+                    Array.Copy(nodo, 0, salida, posiciones[k + i], Nodo);
+                    arriba.Add(Tuple.Create(posiciones[k + i], hijos[hijos.Count - 1].Item2));
+                }
+                Hermanos(salida, arriba.Select(x => x.Item1).ToList());
+                k += cuantos;
+                nivel = arriba;
+            }
+            BitConverter.GetBytes(nivel[0].Item1).CopyTo(salida, cab); // raíz del tag
+            // Nodos que sobraron (no debería pasar al agregar): se dejan como hojas vacías sueltas
+            foreach (var n in nodos.Skip(total))
+            {
+                var vacio = new byte[Nodo];
+                BitConverter.GetBytes(-1).CopyTo(vacio, 4); BitConverter.GetBytes(-1).CopyTo(vacio, 8);
+                Array.Copy(vacio, 0, salida, n, Nodo);
+            }
+
             // Comprobación: lo escrito se vuelve a leer igual
-            if (!Iguales(Decodificar(salida, raiz, largoClave).Claves, esperadas)) throw new Exception("Error al codificar el índice: no se tocó");
+            var hojas2 = new List<Hoja>();
+            Recorrer(salida, BitConverter.ToInt32(salida, cab), largoClave, new List<int>(), hojas2, 0);
+            if (!Iguales(hojas2.SelectMany(h => h.Claves).ToList(), esperadas)) throw new Exception("Error al codificar el índice: no se tocó");
             return salida;
+        }
+
+        /// <summary>Recorre el árbol desde un nodo: anota los nodos que ocupa y las hojas en orden, y valida los interiores.</summary>
+        static Tuple<byte[], long> Recorrer(byte[] b, int o, int largoClave, List<int> nodos, List<Hoja> hojas, int profundidad)
+        {
+            if (profundidad > 10 || o < Nodo || o + Nodo > b.Length || o % Nodo != 0) throw new Exception("Índice con formato inesperado");
+            nodos.Add(o);
+            int attr = BitConverter.ToUInt16(b, o);
+            if ((attr & ~7) != 0) throw new Exception("Índice con tipo de nodo " + attr + ": no soportado");
+            if ((attr & 2) != 0)
+            {
+                var h = Decodificar(b, o, largoClave);
+                hojas.Add(h);
+                return h.Claves.Count > 0 ? h.Claves[h.Claves.Count - 1] : null;
+            }
+            int n = BitConverter.ToUInt16(b, o + 2);
+            if (n == 0 || 12 + n * (largoClave + 8) > Nodo) throw new Exception("Índice con formato inesperado");
+            Tuple<byte[], long> ultima = null;
+            for (int j = 0; j < n; j++)
+            {
+                int e = o + 12 + j * (largoClave + 8);
+                var c = new byte[largoClave];
+                Array.Copy(b, e, c, 0, largoClave);
+                long rec = LeerGrande(b, e + largoClave);
+                int hijo = (int)LeerGrande(b, e + largoClave + 4);
+                var sub = Recorrer(b, hijo, largoClave, nodos, hojas, profundidad + 1);
+                if (sub == null || sub.Item2 != rec || !sub.Item1.SequenceEqual(c)) throw new Exception("Índice con formato inesperado (nodo interior)");
+                ultima = sub;
+            }
+            return ultima;
+        }
+
+        static void Hermanos(byte[] salida, List<int> pos)
+        {
+            for (int i = 0; i < pos.Count; i++)
+            {
+                BitConverter.GetBytes(i > 0 ? pos[i - 1] : -1).CopyTo(salida, pos[i] + 4);
+                BitConverter.GetBytes(i < pos.Count - 1 ? pos[i + 1] : -1).CopyTo(salida, pos[i] + 8);
+            }
+        }
+
+        static byte[] Grande(uint v) { return new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v }; }
+        static long LeerGrande(byte[] b, int o) { return ((long)b[o] << 24) | ((long)b[o + 1] << 16) | ((long)b[o + 2] << 8) | b[o + 3]; }
+
+        /// <summary>Bytes que ocupa una clave dentro de una hoja (con la compresión de FoxPro).</summary>
+        static int Costo(Hoja h, byte[] c, byte[] previa, int largoClave)
+        {
+            int trail = 0;
+            while (trail < largoClave && c[largoClave - 1 - trail] == (byte)' ') trail++;
+            trail = Math.Min(trail, h.MascaraTrail);
+            int dup = 0;
+            if (previa != null) while (dup < largoClave - trail && previa[dup] == c[dup]) dup++;
+            dup = Math.Min(dup, h.MascaraDup);
+            return h.BytesInfo + largoClave - dup - trail;
         }
 
         static int Comparar(Tuple<byte[], long> a, Tuple<byte[], long> b)

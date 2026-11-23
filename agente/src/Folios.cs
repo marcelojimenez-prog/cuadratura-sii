@@ -58,6 +58,7 @@ namespace SisgenAgente
         public long CargadosSinAsignar;       // folios de CAF cargados después del tope que no están en la espera
         public long UltimoEmitido;            // mayor folio de este tipo en F1 (mes actual y anterior)
         public long UltimoRango;              // cantidad de folios del último CAF cargado de este tipo
+        public List<RangoCaf> Cargados = new List<RangoCaf>(); // CAF de este tipo que ya están en folios.dbf
         public List<string> Alertas = new List<string>();
 
         public long QuedanConEspera { get { return Quedan + (EsperaHasta >= EsperaDesde && EsperaDesde > 0 ? EsperaHasta - EsperaDesde + 1 : 0); } }
@@ -87,7 +88,7 @@ namespace SisgenAgente
                 var deTipo = cafs.Where(c => c.Tipo == t.Sii).OrderBy(c => c.Desde).ToList();
                 if (tope <= 0 && deTipo.Count == 0) continue; // tipo no usado por esta empresa
 
-                var e = new EstadoFolio { Tipo = t, Tope = tope, Proximo = proximo };
+                var e = new EstadoFolio { Tipo = t, Tope = tope, Proximo = proximo, Cargados = deTipo };
                 e.EsperaDesde = Entero(prm.Texto("FOLIODES" + t.Espera));
                 e.EsperaHasta = Entero(prm.Texto("FOLIOHAS" + t.Espera));
                 e.Activo = deTipo.FirstOrDefault(c => c.Hasta == tope);

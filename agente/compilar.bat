@@ -21,6 +21,18 @@ rem 2) El aviso de folios (ventana en cada equipo)
   "%~dp0aviso\*.cs"
 if errorlevel 1 exit /b 1
 
+rem 2b) Pruebas automaticas con indices reales de clientes (pruebas\casos). Si fallan, no se genera el instalador.
+if not exist "%~dp0pruebas\bin" mkdir "%~dp0pruebas\bin"
+"%CSC%" /nologo /target:exe /platform:anycpu /optimize+ /main:SisgenAgente.Pruebas /out:"%~dp0pruebas\bin\PruebasAgente.exe" ^
+  /reference:System.ServiceProcess.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll ^
+  "%~dp0src\*.cs" "%~dp0pruebas\*.cs"
+if errorlevel 1 exit /b 1
+"%~dp0pruebas\bin\PruebasAgente.exe" "%~dp0pruebas\casos"
+if errorlevel 1 (
+  echo PRUEBAS FALLARON: no se genera el instalador.
+  exit /b 1
+)
+
 rem 3) El instalador (un solo archivo que lleva el servicio y el aviso adentro)
 "%CSC%" /nologo /target:winexe /platform:anycpu /optimize+ /main:SisgenAgente.Instalador ^
   /out:"%~dp0dist\InstalarAgenteSisgen.exe" /win32manifest:"%~dp0instalador\app.manifest" ^

@@ -172,7 +172,7 @@ namespace SisgenAgente
         bool produccion;
         // Avisar cuando queden N folios, por documento (código SII -> N)
         Dictionary<string, long> avisos = new Dictionary<string, long>();
-        List<Tuple<string, TextBox>> camposAviso;
+        List<Tuple<string, TextBox, CheckBox>> camposAviso;
         CheckedListBox lstFolios;
 
         // Controles de cada paso
@@ -442,31 +442,37 @@ namespace SisgenAgente
             Cursor = Cursors.WaitCursor;
             try { estados = Folios.Calcular(candidato.Datos, DateTime.Today); } catch { }
             Cursor = Cursors.Default;
-            var tabla = new TableLayoutPanel { ColumnCount = 3, AutoSize = true, Width = 570, CellBorderStyle = TableLayoutPanelCellBorderStyle.None };
-            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+            var tabla = new TableLayoutPanel { ColumnCount = 4, AutoSize = true, Width = 570, CellBorderStyle = TableLayoutPanelCellBorderStyle.None };
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 60));
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+            tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
             tabla.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
             Func<string, bool, Label> celda = (t, neg) => new Label { Text = t, AutoSize = true, Margin = new Padding(0, 6, 0, 2), ForeColor = neg ? Negro : Gris,
                                                                      Font = neg ? new Font("Segoe UI Semibold", 9.5f) : Font };
-            tabla.Controls.Add(celda("Documento", true)); tabla.Controls.Add(celda("Hoy", true)); tabla.Controls.Add(celda("Avisar con", true));
-            camposAviso = new List<Tuple<string, TextBox>>();
+            tabla.Controls.Add(celda("Vigilar", true)); tabla.Controls.Add(celda("Documento", true)); tabla.Controls.Add(celda("Hoy", true)); tabla.Controls.Add(celda("Avisar con", true));
+            camposAviso = new List<Tuple<string, TextBox, CheckBox>>();
             foreach (var e in estados)
             {
                 long actual;
+                bool conValor = avisos.TryGetValue(e.Tipo.Sii, out actual);
+                // 0 = documento que esta sucursal no usa: no se vigila ni se piden folios
+                var vigilar = new CheckBox { Checked = !(conValor && actual == 0), AutoSize = true, Margin = new Padding(18, 6, 0, 0) };
                 var num = new TextBox { Width = 90, TextAlign = HorizontalAlignment.Right, Margin = new Padding(0, 3, 0, 0), MaxLength = 7,
-                                        Text = avisos.TryGetValue(e.Tipo.Sii, out actual) ? actual.ToString() : "" };
+                                        Text = conValor && actual > 0 ? actual.ToString() : "", Enabled = vigilar.Checked };
                 num.KeyPress += (s, ev) => { if (!char.IsDigit(ev.KeyChar) && !char.IsControl(ev.KeyChar)) ev.Handled = true; };
+                vigilar.CheckedChanged += (s, ev) => num.Enabled = vigilar.Checked;
+                tabla.Controls.Add(vigilar);
                 tabla.Controls.Add(celda(e.Tipo.Nombre, false));
                 tabla.Controls.Add(celda("quedan " + e.Quedan.ToString("N0") + (e.EsperaHasta > 0 ? " + rango en espera" : ""), false));
                 tabla.Controls.Add(num);
-                camposAviso.Add(Tuple.Create(e.Tipo.Sii, num));
+                camposAviso.Add(Tuple.Create(e.Tipo.Sii, num, vigilar));
             }
             var marco = new Panel { Width = 575, Height = 190, AutoScroll = true };
             marco.Controls.Add(tabla);
             Poner(Titulo("Avisos por documento"),
                   Texto(estados.Count == 0 ? "No se pudo leer el estado de folios de esta carpeta; se usará el aviso normal (20 % del rango)."
-                                           : "Escribe con cuántos folios restantes avisar en cada documento (con la cuarta parte se considera crítico). " +
-                                             "Si lo dejas en blanco, avisa con el 20 % del rango.", 40),
+                                           : "Desmarca los documentos que esta sucursal no emite: no se avisará ni se pedirán folios de ellos. " +
+                                             "En \"Avisar con\" escribe con cuántos folios restantes avisar (en blanco: el 20 % del rango).", 40),
                   marco);
             siguiente.Tag = new Func<bool>(() =>
             {
@@ -474,7 +480,8 @@ namespace SisgenAgente
                 foreach (var x in camposAviso)
                 {
                     long n;
-                    if (long.TryParse(x.Item2.Text.Trim(), out n) && n > 0) avisos[x.Item1] = n;
+                    if (!x.Item3.Checked) avisos[x.Item1] = 0;
+                    else if (long.TryParse(x.Item2.Text.Trim(), out n) && n > 0) avisos[x.Item1] = n;
                 }
                 return true;
             });
@@ -484,14 +491,41 @@ namespace SisgenAgente
 
         void PasoConfirmar()
         {
-            Poner(Titulo("Listo para instalar"),
-                  Texto(actualizar ? "Se actualizará el Agente Sisgen manteniendo su configuración." :
-                        conectadoComo != null ? "Conectado al portal como: " + conectadoComo : "Sin portal: solo folios.", 26),
-                  Texto("Carpeta de Sisgen:  " + (candidato != null ? candidato.ToString() : "(la ya configurada)"), 24),
-                  Texto("Folios:  " + (folios ? "sí, en " + string.Join(", ", carpetasFolios) + (produccion ? "  ·  REALES (producción)" : "  ·  solo certificación") : "no"), 24),
-                  Texto("Se instalará en:  " + Instalador.Destino, 24),
-                  Texto("El servicio \"Agente Sisgen\" arrancará solo cada vez que se encienda el equipo.", 40));
+            // Revisión del cliente antes de activar los folios: solo lee (las pruebas se hacen en una copia temporal)
+            var revision = new List<string>();
+            bool problemas = false;
+            if (folios)
+            {
+                Cursor = Cursors.WaitCursor;
+                foreach (var c in carpetasFolios)
+                {
+                    revision.Add(c + ":");
+                    try
+                    {
+                        foreach (var r in RevisionCliente.Revisar(c)) { revision.Add("   " + r); if (!r.Ok) problemas = true; }
+                    }
+                    catch (Exception e) { revision.Add("   ✗ " + e.Message); problemas = true; }
+                }
+                Cursor = Cursors.Default;
+            }
+            var caja = new TextBox { Multiline = true, ReadOnly = true, Width = 570, Height = 118, ScrollBars = ScrollBars.Vertical, BackColor = Color.White,
+                                     Text = string.Join("\r\n", revision), ForeColor = problemas ? Color.Firebrick : Negro };
+            var controles = new List<Control> {
+                Titulo(problemas ? "Revisión del cliente: hay problemas" : "Listo para instalar"),
+                Texto(actualizar ? "Se actualizará el Agente Sisgen manteniendo su configuración." :
+                      conectadoComo != null ? "Conectado al portal como: " + conectadoComo : "Sin portal: solo folios.", 22),
+                Texto("Folios:  " + (folios ? "sí" + (produccion ? "  ·  REALES (producción)" : "  ·  solo certificación") : "no") +
+                      "     ·     Se instala en:  " + Instalador.Destino, 22) };
+            if (folios)
+            {
+                controles.Add(Texto(problemas
+                    ? "Con estos problemas el agente no podría cargar folios en Sisgen. Envía esta lista a soporte, o vuelve atrás y desactiva los folios."
+                    : "Revisión del cliente (solo lectura, no se cambió nada):", problemas ? 40 : 20));
+                controles.Add(caja);
+            }
+            Poner(controles.ToArray());
             siguiente.Text = "Instalar";
+            siguiente.Enabled = !problemas;
             siguiente.Tag = null;
         }
 
@@ -600,6 +634,36 @@ namespace SisgenAgente
                 s.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
             }
             Linea("✓ Servicio \"Agente Sisgen (Portal)\" en ejecución.");
+            if (conFolios) EsperarPruebaSii(carpetasAviso);
+        }
+
+        /// <summary>
+        /// El servicio, al arrancar, entra al SII con el certificado y deja el resultado en procesos\folios\agente\estado_sii.txt.
+        /// Se espera ese resultado (hasta 2 minutos) para mostrarlo: es la prueba real, con la misma cuenta del servicio.
+        /// </summary>
+        void EsperarPruebaSii(List<string> carpetas)
+        {
+            Linea("Probando la entrada al SII con el certificado (la hace el servicio)…");
+            var inicio = DateTime.Now.AddSeconds(-5);
+            foreach (var c in carpetas)
+            {
+                string f = Path.Combine(c, "procesos", "folios", "agente", "estado_sii.txt");
+                string linea = null;
+                for (int i = 0; i < 120 && linea == null; i++)
+                {
+                    try { if (File.Exists(f) && File.GetLastWriteTime(f) >= inicio) linea = File.ReadAllText(f).Trim(); } catch { }
+                    if (linea == null) Thread.Sleep(1000);
+                }
+                if (linea == null) { Linea("   ? " + c + ": el servicio no informó a tiempo; revisa el registro en " + Path.Combine(Instalador.Destino, "logs")); continue; }
+                var p = linea.Split('|');
+                if (p.Length >= 3 && p[2] == "ok") Linea("   ✓ " + c + ": el agente entra al SII (" + (p.Length > 3 ? p[3] : "") + ").");
+                else
+                {
+                    Linea("   ✗ " + c + ": el agente NO pudo entrar al SII. No podrá pedir folios hasta corregirlo.");
+                    Linea("      " + (p.Length > 3 ? string.Join("|", p.Skip(3)) : linea));
+                    Linea("      Envía este mensaje a soporte.");
+                }
+            }
         }
 
         void Desinstalar()
